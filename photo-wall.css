@@ -226,6 +226,7 @@ input {
     scale(var(--view-scale, 1));
   transform-origin: center center;
   transform-style: preserve-3d;
+  will-change: transform;
   width: max-content;
 }
 

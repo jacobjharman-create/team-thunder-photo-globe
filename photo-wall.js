@@ -43,10 +43,11 @@ let drag = null;
 let saveTimer = 0;
 const activePointers = new Map();
 const view = { x: 0, y: 0, scale: 1.55, rotate: 0 };
+const currentView = { x: 0, y: 0, scale: 1.55, rotate: 0 };
 let gesture = null;
-let spinRaf = 0;
 let spinVelocity = 0;
-let lastSpinTime = 0;
+let motionRaf = 0;
+let lastMotionTime = 0;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -146,7 +147,8 @@ function render() {
     syncTileWidths();
     measureSequence();
     wall.scrollLeft = sequenceWidth;
-    applyViewTransform();
+    Object.assign(currentView, view);
+    writeViewTransform();
     updateCurve();
   });
 }
@@ -159,11 +161,61 @@ function syncTileWidths() {
 }
 
 function applyViewTransform() {
-  track.style.setProperty("--view-x", `${view.x.toFixed(2)}px`);
-  track.style.setProperty("--view-y", `${view.y.toFixed(2)}px`);
-  track.style.setProperty("--view-scale", view.scale.toFixed(4));
-  track.style.setProperty("--view-rotate", `${view.rotate.toFixed(2)}deg`);
+  requestMotion();
+}
+
+function writeViewTransform() {
+  track.style.setProperty("--view-x", `${currentView.x.toFixed(2)}px`);
+  track.style.setProperty("--view-y", `${currentView.y.toFixed(2)}px`);
+  track.style.setProperty("--view-scale", currentView.scale.toFixed(4));
+  track.style.setProperty("--view-rotate", `${currentView.rotate.toFixed(2)}deg`);
   scheduleCurve();
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lerp(current, target, amount) {
+  return current + (target - current) * amount;
+}
+
+function requestMotion() {
+  if (!motionRaf) motionRaf = requestAnimationFrame(motionStep);
+}
+
+function motionStep(now) {
+  if (!lastMotionTime) lastMotionTime = now;
+  const dt = Math.min(40, now - lastMotionTime);
+  lastMotionTime = now;
+
+  if (Math.abs(spinVelocity) > 0.001) {
+    wall.scrollLeft += spinVelocity * dt;
+    keepInfinite();
+    spinVelocity *= Math.pow(0.955, dt / 16.67);
+    if (Math.abs(spinVelocity) < 0.012) spinVelocity = 0;
+  }
+
+  const ease = 1 - Math.exp(-dt / 58);
+  currentView.x = lerp(currentView.x, view.x, ease);
+  currentView.y = lerp(currentView.y, view.y, ease);
+  currentView.scale = lerp(currentView.scale, view.scale, ease);
+  currentView.rotate = lerp(currentView.rotate, view.rotate, ease);
+  writeViewTransform();
+
+  const viewSettled =
+    Math.abs(currentView.x - view.x) < 0.05 &&
+    Math.abs(currentView.y - view.y) < 0.05 &&
+    Math.abs(currentView.scale - view.scale) < 0.001 &&
+    Math.abs(currentView.rotate - view.rotate) < 0.03;
+
+  if (spinVelocity || activePointers.size || !viewSettled) {
+    motionRaf = requestAnimationFrame(motionStep);
+    return;
+  }
+
+  motionRaf = 0;
+  lastMotionTime = 0;
 }
 
 function getPointerPair() {
@@ -198,44 +250,24 @@ function startGesture() {
 function updateGesture() {
   if (!gesture || activePointers.size < 2) return;
   const metrics = getGestureMetrics(getPointerPair());
-  view.scale = Math.min(3.2, Math.max(0.45, gesture.startScale * (metrics.distance / gesture.distance)));
+  view.scale = clamp(gesture.startScale * (metrics.distance / gesture.distance), 0.45, 3.2);
   view.x = gesture.startX + metrics.centerX - gesture.centerX;
   view.y = gesture.startY + metrics.centerY - gesture.centerY;
   let angleDelta = metrics.angle - gesture.angle;
   if (angleDelta > 180) angleDelta -= 360;
   if (angleDelta < -180) angleDelta += 360;
-  view.rotate = Math.min(22, Math.max(-22, gesture.startRotate + angleDelta));
+  view.rotate = clamp(gesture.startRotate + angleDelta, -22, 22);
   applyViewTransform();
 }
 
 function stopSpin() {
-  if (spinRaf) cancelAnimationFrame(spinRaf);
-  spinRaf = 0;
   spinVelocity = 0;
-}
-
-function spinStep(now) {
-  if (!lastSpinTime) lastSpinTime = now;
-  const dt = Math.min(34, now - lastSpinTime);
-  lastSpinTime = now;
-  wall.scrollLeft += spinVelocity * dt;
-  keepInfinite();
-  scheduleCurve();
-  spinVelocity *= Math.pow(0.94, dt / 16.67);
-  if (Math.abs(spinVelocity) < 0.025) {
-    stopSpin();
-    return;
-  }
-  spinRaf = requestAnimationFrame(spinStep);
 }
 
 function startSpin(velocity) {
   stopSpin();
-  spinVelocity = velocity;
-  lastSpinTime = 0;
-  if (Math.abs(spinVelocity) >= 0.025) {
-    spinRaf = requestAnimationFrame(spinStep);
-  }
+  spinVelocity = clamp(velocity, -3.8, 3.8);
+  if (Math.abs(spinVelocity) >= 0.012) requestMotion();
 }
 
 function measureSequence() {
@@ -336,7 +368,7 @@ wall.addEventListener("wheel", (event) => {
   if (event.ctrlKey || event.metaKey) {
     event.preventDefault();
     const delta = -event.deltaY * 0.0012;
-    view.scale = Math.min(3.2, Math.max(0.45, view.scale * (1 + delta)));
+    view.scale = clamp(view.scale * (1 + delta), 0.45, 3.2);
     applyViewTransform();
     return;
   }
@@ -354,8 +386,10 @@ wall.addEventListener("pointerdown", (event) => {
     drag = {
       id: event.pointerId,
       x: event.clientX,
+      y: event.clientY,
       scrollLeft: wall.scrollLeft,
       lastX: event.clientX,
+      lastY: event.clientY,
       lastScrollLeft: wall.scrollLeft,
       lastTime: now,
       velocity: 0,
@@ -365,7 +399,11 @@ wall.addEventListener("pointerdown", (event) => {
     startGesture();
   }
   wall.classList.add("dragging");
-  wall.setPointerCapture(event.pointerId);
+  try {
+    wall.setPointerCapture(event.pointerId);
+  } catch {
+    // Synthetic pointer tests do not always register an active pointer capture target.
+  }
 });
 
 wall.addEventListener("pointermove", (event) => {
@@ -380,11 +418,14 @@ wall.addEventListener("pointermove", (event) => {
   const delta = event.clientX - drag.x;
   const nextScrollLeft = drag.scrollLeft - delta;
   const dt = Math.max(1, now - drag.lastTime);
-  drag.velocity = (nextScrollLeft - drag.lastScrollLeft) / dt;
+  const instantVelocity = (nextScrollLeft - drag.lastScrollLeft) / dt;
+  drag.velocity = drag.velocity * 0.72 + instantVelocity * 0.28;
   drag.lastX = event.clientX;
+  drag.lastY = event.clientY;
   drag.lastScrollLeft = nextScrollLeft;
   drag.lastTime = now;
   wall.scrollLeft = nextScrollLeft;
+  scheduleCurve();
 });
 
 function stopDrag(event) {
@@ -399,7 +440,13 @@ function stopDrag(event) {
     drag = {
       id: remaining[0],
       x: remaining[1].x,
+      y: remaining[1].y,
       scrollLeft: wall.scrollLeft,
+      lastX: remaining[1].x,
+      lastY: remaining[1].y,
+      lastScrollLeft: wall.scrollLeft,
+      lastTime: performance.now(),
+      velocity: 0,
     };
     gesture = null;
     return;
