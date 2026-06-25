@@ -258,33 +258,6 @@ input {
   }
 
   .topbar {
-    left: 0;
-    padding:
-      max(8px, env(safe-area-inset-top))
-      max(12px, env(safe-area-inset-right))
-      8px
-      max(12px, env(safe-area-inset-left));
-    position: fixed;
-    right: 0;
-    top: 0;
-  }
-
-  .brand {
-    font-size: 0.82rem;
-    gap: 8px;
-  }
-
-  .brand-mark {
-    height: 32px;
-    width: 32px;
-  }
-
-  .photo-count {
-    min-width: 30px;
-  }
-
-  .icon-button {
-    height: 34px;
-    width: 34px;
+    display: none;
   }
 }
