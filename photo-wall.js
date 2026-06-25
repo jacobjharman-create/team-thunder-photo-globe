@@ -9,6 +9,16 @@ const starterPhotos = [
   { src: "assets/photo-wall/8-Photo-8.jpg", ratio: 0.4602 },
   { src: "assets/photo-wall/9-Photo-9.jpg", ratio: 0.75 },
   { src: "assets/photo-wall/10-Photo-10.jpg", ratio: 0.6664 },
+  { src: "assets/photo-wall/11-Photo-11.jpg", ratio: 0.6664 },
+  { src: "assets/photo-wall/12-Photo-12.jpg", ratio: 0.6664 },
+  { src: "assets/photo-wall/13-Photo-13.jpg", ratio: 0.6664 },
+  { src: "assets/photo-wall/14-Photo-14.jpg", ratio: 0.6664 },
+  { src: "assets/photo-wall/15-Photo-15.jpg", ratio: 1.5006 },
+  { src: "assets/photo-wall/16-Photo-16.jpg", ratio: 1.5006 },
+  { src: "assets/photo-wall/17-Photo-17.jpg", ratio: 0.75 },
+  { src: "assets/photo-wall/18-Photo-18.jpg", ratio: 1.5006 },
+  { src: "assets/photo-wall/19-Photo-19.jpg", ratio: 1.5006 },
+  { src: "assets/photo-wall/20-Photo-20.jpg", ratio: 0.6664 },
 ];
 
 const rowPattern = [
