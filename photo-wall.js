@@ -55,6 +55,7 @@ const dbName = "team-thunder-photo-wall";
 const storeName = "photos";
 const zoomLimits = { min: 0.65, max: 5.6 };
 const defaultView = { x: 0, y: 0, zoom: 0.92, rotate: 0 };
+const orbitVelocityLimit = 3.2;
 const pointerState = new Map();
 
 let gl;
@@ -152,6 +153,10 @@ function shortestAngleDelta(target, current) {
 
 function positiveModulo(value, size) {
   return ((value % size) + size) % size;
+}
+
+function clampOrbitVelocity(velocity) {
+  return clamp(velocity, -orbitVelocityLimit, orbitVelocityLimit);
 }
 
 function photoKey(photo) {
@@ -478,8 +483,6 @@ function renderScene(now) {
 
   orbit += orbitVelocity * dt;
   targetOrbit = orbit;
-  orbitVelocity *= Math.pow(0.944, dt / 16.67);
-  if (Math.abs(orbitVelocity) < 0.004) orbitVelocity = 0;
 
   const ease = 1 - Math.exp(-dt / 70);
   currentView.x = lerp(currentView.x, view.x, ease);
@@ -591,6 +594,8 @@ function renderScene(now) {
     uniqueSrcs: visiblePhotos.size,
     zoom: Number(currentView.zoom.toFixed(3)),
     fps: Number((1000 / dt).toFixed(1)),
+    orbit: Number(orbit.toFixed(2)),
+    orbitVelocity: Number(orbitVelocity.toFixed(4)),
     horizontalRepeats: countHorizontalRepeats(meshRows),
     verticalRepeats: countVerticalRepeats(meshRows),
   };
@@ -711,7 +716,7 @@ wall.addEventListener("pointermove", (event) => {
   const dt = Math.max(1, now - drag.lastTime);
   const movement = -dx * (1.8 / Math.max(0.7, currentView.zoom));
   orbit += movement;
-  orbitVelocity = orbitVelocity * 0.68 + (movement / dt) * 0.32;
+  orbitVelocity = clampOrbitVelocity(orbitVelocity * 0.68 + (movement / dt) * 0.32);
   drag.lastX = event.clientX;
   drag.lastTime = now;
   drag.velocity = orbitVelocity;
@@ -736,7 +741,7 @@ function stopPointer(event) {
     gesture = null;
     return;
   }
-  if (endingDrag) orbitVelocity = endingDrag.velocity;
+  if (endingDrag) orbitVelocity = clampOrbitVelocity(endingDrag.velocity);
   drag = null;
   gesture = null;
   wall.classList.remove("dragging");
@@ -763,7 +768,7 @@ wall.addEventListener("wheel", (event) => {
   if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
     event.preventDefault();
     orbit += event.deltaY * 0.9;
-    orbitVelocity = event.deltaY * 0.018;
+    orbitVelocity = clampOrbitVelocity(event.deltaY * 0.018);
   }
 }, { passive: false });
 
