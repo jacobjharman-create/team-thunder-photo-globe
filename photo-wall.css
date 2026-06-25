@@ -151,7 +151,7 @@ input {
 .stage {
   min-height: 0;
   overflow: hidden;
-  perspective: 920px;
+  perspective: 760px;
   perspective-origin: 50% 45%;
   position: relative;
   z-index: 2;
@@ -224,7 +224,7 @@ input {
     translate3d(var(--view-x, 0px), var(--view-y, 0px), 0)
     rotate(var(--view-rotate, 0deg))
     scale(var(--view-scale, 1));
-  transform-origin: center center;
+  transform-origin: var(--origin-x, center) center;
   transform-style: preserve-3d;
   will-change: transform;
   width: max-content;
@@ -257,6 +257,7 @@ input {
   transform:
     translateZ(var(--z, 0px))
     rotateY(var(--rotate, 0deg))
+    rotateX(var(--rotate-x, 0deg))
     translateY(var(--lift, 0px))
     scale(var(--scale, 1));
   transform-origin: center center;

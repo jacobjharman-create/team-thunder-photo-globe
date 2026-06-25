@@ -50,7 +50,7 @@ const track = document.querySelector("#track");
 const input = document.querySelector("#photo-input");
 const resetButton = document.querySelector("#reset-photos");
 const countOutput = document.querySelector("#photo-count");
-const defaultView = { x: 0, y: 0, scale: 1.65, rotate: 0 };
+const defaultView = { x: 0, y: 0, scale: 0.88, rotate: 0 };
 const zoomLimits = { min: 0.7, max: 5.5 };
 
 const dbName = "team-thunder-photo-wall";
@@ -68,6 +68,7 @@ let gesture = null;
 let spinVelocity = 0;
 let motionRaf = 0;
 let lastMotionTime = 0;
+let repairTimer = 0;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -377,16 +378,29 @@ function repairRenderedRepeats() {
   }
 }
 
+function scheduleRenderedRepair() {
+  clearTimeout(repairTimer);
+  repairTimer = setTimeout(() => {
+    repairTimer = 0;
+    repairRenderedRepeats();
+    syncTileWidths();
+    measureSequence();
+    updateCurve();
+  }, 180);
+}
+
 function applyViewTransform() {
   requestMotion();
 }
 
 function writeViewTransform() {
+  track.style.setProperty("--origin-x", `${(wall.scrollLeft + wall.clientWidth / 2).toFixed(2)}px`);
   track.style.setProperty("--view-x", `${currentView.x.toFixed(2)}px`);
   track.style.setProperty("--view-y", `${currentView.y.toFixed(2)}px`);
   track.style.setProperty("--view-scale", currentView.scale.toFixed(4));
   track.style.setProperty("--view-rotate", `${currentView.rotate.toFixed(2)}deg`);
   scheduleCurve();
+  scheduleRenderedRepair();
 }
 
 function clamp(value, min, max) {
@@ -402,6 +416,11 @@ function shortestAngleDelta(target, current) {
 
 function lerp(current, target, amount) {
   return current + (target - current) * amount;
+}
+
+function smoothstep(value) {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function clampViewTarget() {
@@ -538,27 +557,44 @@ function updateCurve() {
   keepInfinite();
   const tiles = track.querySelectorAll(".tile");
   const rect = wall.getBoundingClientRect();
-  const center = wall.scrollLeft + rect.width / 2;
-  const radius = rect.width * 1.15;
+  track.style.setProperty("--origin-x", `${(wall.scrollLeft + rect.width / 2).toFixed(2)}px`);
+  const centerX = wall.scrollLeft + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const zoomProgress = smoothstep((currentView.scale - zoomLimits.min) / (zoomLimits.max - zoomLimits.min));
+  const sphere = 1 - zoomProgress;
+  const radiusX = rect.width * (0.42 + zoomProgress * 1.45);
+  const radiusY = rect.height * (0.36 + zoomProgress * 1.35);
+  const maxRotateY = 18 + sphere * 62;
+  const maxRotateX = 8 + sphere * 40;
+  const frontDepth = 34 + sphere * 74;
+  const backDepth = 58 + sphere * 300;
+  const edgeScaleDrop = 0.025 + sphere * 0.16;
 
   tiles.forEach((tile) => {
     const row = tile.parentElement;
-    const tileCenter = (row?.offsetLeft || 0) + tile.offsetLeft + tile.offsetWidth / 2;
-    const distance = (tileCenter - center) / radius;
-    const clamped = Math.max(-1.18, Math.min(1.18, distance));
-    const abs = Math.abs(clamped);
-    const rotate = clamped * -30;
-    const z = 120 * (1 - abs) - 54 * abs;
-    const scale = 0.955 + 0.045 * (1 - abs);
-    const lift = Math.sin(clamped * Math.PI) * -3;
-    const brightness = 0.82 + 0.18 * (1 - abs * 0.32);
+    const tileCenterX = (row?.offsetLeft || 0) + tile.offsetLeft + tile.offsetWidth / 2;
+    const tileRect = tile.getBoundingClientRect();
+    const tileCenterY = tileRect.top + tileRect.height / 2;
+    const xDistance = (tileCenterX - centerX) / radiusX;
+    const yDistance = (tileCenterY - centerY) / radiusY;
+    const clampedX = clamp(xDistance, -1.24, 1.24);
+    const clampedY = clamp(yDistance, -1.1, 1.1);
+    const radial = clamp(Math.hypot(clampedX, clampedY), 0, 1.28);
+    const edge = Math.min(1, radial);
+    const rotate = clampedX * -maxRotateY;
+    const rotateX = clampedY * maxRotateX;
+    const z = frontDepth * (1 - edge) - backDepth * edge;
+    const scale = 1 - edge * edgeScaleDrop;
+    const lift = clampedY * sphere * -18 + Math.sin(clampedX * Math.PI) * sphere * -5;
+    const brightness = 0.72 + 0.28 * (1 - edge * 0.52);
 
     tile.style.setProperty("--rotate", `${rotate.toFixed(2)}deg`);
+    tile.style.setProperty("--rotate-x", `${rotateX.toFixed(2)}deg`);
     tile.style.setProperty("--z", `${z.toFixed(2)}px`);
     tile.style.setProperty("--scale", scale.toFixed(3));
     tile.style.setProperty("--lift", `${lift.toFixed(2)}px`);
     tile.style.filter = `brightness(${brightness.toFixed(3)}) saturate(1.12)`;
-    tile.style.zIndex = String(Math.round((1 - abs) * 1000));
+    tile.style.zIndex = String(Math.round((1 - edge) * 1000));
   });
 }
 
@@ -612,7 +648,15 @@ wall.addEventListener("wheel", (event) => {
   if (event.ctrlKey || event.metaKey) {
     event.preventDefault();
     const delta = -event.deltaY * 0.0012;
-    view.scale = clamp(view.scale * (1 + delta), zoomLimits.min, zoomLimits.max);
+    const previousScale = view.scale;
+    const nextScale = clamp(view.scale * (1 + delta), zoomLimits.min, zoomLimits.max);
+    const scaleDelta = nextScale / previousScale;
+    const rect = wall.getBoundingClientRect();
+    const originX = event.clientX - rect.left - rect.width / 2;
+    const originY = event.clientY - rect.top - rect.height / 2;
+    view.scale = nextScale;
+    view.x += originX * (1 - scaleDelta) * 0.22;
+    view.y += originY * (1 - scaleDelta) * 0.22;
     clampViewTarget();
     applyViewTransform();
     return;
