@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Team Thunder Photo Wall</title>
+    <meta name="description" content="Swipeable Team Thunder photo wall with an infinite curved gallery." />
+    <link rel="stylesheet" href="photo-wall.css" />
+  </head>
+  <body>
+    <main class="applet" aria-label="Team Thunder swipeable photo wall">
+      <header class="topbar">
+        <a class="brand" href="https://teamthunderwrestling.com/" aria-label="Team Thunder home">
+          <span class="brand-mark">TT</span>
+          <span>Team Thunder</span>
+        </a>
+        <div class="actions">
+          <output id="photo-count" class="photo-count" aria-live="polite"></output>
+          <label class="icon-button" title="Add photos" aria-label="Add photos">
+            <input id="photo-input" type="file" accept="image/*" multiple />
+            <span aria-hidden="true">+</span>
+          </label>
+          <button id="reset-photos" class="icon-button danger" type="button" title="Remove added photos" aria-label="Remove added photos">
+            <span aria-hidden="true">x</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="stage" aria-label="Swipe gallery">
+        <div class="glow glow-left" aria-hidden="true"></div>
+        <div class="glow glow-right" aria-hidden="true"></div>
+        <div id="wall" class="wall" tabindex="0">
+          <div id="track" class="track"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="photo-wall.js"></script>
+  </body>
+</html>
