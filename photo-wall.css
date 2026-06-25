@@ -29,10 +29,8 @@ body {
     linear-gradient(180deg, #020307 0%, #050917 52%, #020307 100%);
   color: var(--ink);
   font-family: var(--font);
-  inset: 0;
   margin: 0;
   overflow: hidden;
-  position: fixed;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
@@ -47,6 +45,7 @@ input {
 .applet {
   display: grid;
   grid-template-rows: var(--topbar) minmax(0, 1fr);
+  height: 100vh;
   height: 100dvh;
   min-height: 100vh;
   overflow: hidden;

@@ -430,6 +430,7 @@ function countVerticalRepeats(rows) {
 }
 
 function resizeCanvas() {
+  if (!gl) return;
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(rect.width * dpr));
@@ -927,7 +928,18 @@ resetButton.addEventListener("click", async () => {
   rebuild();
 });
 
-window.addEventListener("resize", resizeCanvas);
+function scheduleCanvasResize() {
+  resizeCanvas();
+  setTimeout(resizeCanvas, 120);
+  setTimeout(resizeCanvas, 360);
+}
+
+window.addEventListener("resize", scheduleCanvasResize);
+window.addEventListener("orientationchange", scheduleCanvasResize);
+window.addEventListener("pageshow", scheduleCanvasResize);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") scheduleCanvasResize();
+});
 
 window.__photoGlobeDebug = () => ({
   ...lastStats,

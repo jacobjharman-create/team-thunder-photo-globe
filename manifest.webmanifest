@@ -2,7 +2,7 @@
   "name": "Team Thunder Photo Globe",
   "short_name": "Photo Globe",
   "description": "Full-screen swipeable Team Thunder photo globe.",
-  "start_url": "./?source=pwa",
+  "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
   "orientation": "any",
