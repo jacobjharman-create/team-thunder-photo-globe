@@ -15,7 +15,11 @@
 
 html,
 body {
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  width: 100%;
 }
 
 body {
@@ -25,8 +29,14 @@ body {
     linear-gradient(180deg, #020307 0%, #050917 52%, #020307 100%);
   color: var(--ink);
   font-family: var(--font);
+  inset: 0;
   margin: 0;
   overflow: hidden;
+  position: fixed;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  width: 100vw;
 }
 
 button,

@@ -53,9 +53,12 @@ const countOutput = document.querySelector("#photo-count");
 
 const dbName = "team-thunder-photo-wall";
 const storeName = "photos";
+const hiddenStarterStorageKey = "team-thunder-photo-wall-hidden-starters";
 const zoomLimits = { min: 0.65, max: 5.6 };
 const defaultView = { x: 0, y: 0, zoom: 0.92, rotate: 0 };
 const orbitVelocityLimit = 3.2;
+const longPressMs = 650;
+const longPressMoveLimit = 12;
 const pointerState = new Map();
 
 let gl;
@@ -64,12 +67,15 @@ let buffer;
 let attribs;
 let uniforms;
 let customPhotos = [];
+let hiddenStarterKeys = new Set();
 let photos = [];
 let textures = [];
 let meshRows = [];
+let pickTiles = [];
 let lastTime = 0;
 let drag = null;
 let gesture = null;
+let longPress = null;
 let orbit = 0;
 let targetOrbit = 0;
 let orbitVelocity = 0;
@@ -121,6 +127,16 @@ async function writeStoredPhoto(photo) {
   });
 }
 
+async function deleteStoredPhoto(id) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 async function clearStoredPhotos() {
   const db = await openDb();
   return new Promise((resolve, reject) => {
@@ -129,6 +145,19 @@ async function clearStoredPhotos() {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+function readHiddenStarterKeys() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(hiddenStarterStorageKey) || "[]");
+    hiddenStarterKeys = new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    hiddenStarterKeys = new Set();
+  }
+}
+
+function writeHiddenStarterKeys() {
+  localStorage.setItem(hiddenStarterStorageKey, JSON.stringify([...hiddenStarterKeys]));
 }
 
 function clamp(value, min, max) {
@@ -172,6 +201,7 @@ function makeRandom(seed) {
 }
 
 function choosePhotoIndex(avoid, random) {
+  if (!photos.length) return 0;
   const candidates = [];
   for (let index = 0; index < photos.length; index += 1) {
     if (!avoid.has(index)) candidates.push(index);
@@ -326,6 +356,13 @@ function initWebGl() {
 }
 
 function buildMeshRows() {
+  if (!photos.length) {
+    meshRows = [];
+    lastStats.horizontalRepeats = 0;
+    lastStats.verticalRepeats = 0;
+    return;
+  }
+
   const random = makeRandom(20260625 + photos.length * 131);
   const columns = Math.max(96, photos.length * 5);
   const rows = rowTypes.map((type) => ({ type, tiles: [] }));
@@ -451,6 +488,15 @@ function drawTile(renderTile) {
   gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
+function getTileBounds(points) {
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  };
+}
+
 function getGlobeParameters() {
   const width = canvas.width;
   const height = canvas.height;
@@ -561,10 +607,7 @@ function renderScene(now) {
         ];
 
         const points = corners.map((corner) => projectPoint(corner, params.cameraDistance, params.centerX, params.centerY, params.screenRotation));
-        const minX = Math.min(...points.map((point) => point.x));
-        const maxX = Math.max(...points.map((point) => point.x));
-        const minY = Math.min(...points.map((point) => point.y));
-        const maxY = Math.max(...points.map((point) => point.y));
+        const { minX, maxX, minY, maxY } = getTileBounds(points);
         if (maxX < -80 || minX > params.width + 80 || maxY < -80 || minY > params.height + 80) continue;
 
         const edge = clamp(Math.hypot(longitude / 1.34, latitude / 0.98), 0, 1);
@@ -576,6 +619,10 @@ function renderScene(now) {
           texture,
           shade,
           photoIndex: tile.photoIndex,
+          minX,
+          maxX,
+          minY,
+          maxY,
         });
         visiblePhotos.add(tile.photoIndex);
       }
@@ -584,6 +631,7 @@ function renderScene(now) {
 
   drawQueue.sort((a, b) => a.depth - b.depth);
   drawQueue.forEach(drawTile);
+  pickTiles = drawQueue.map(({ photoIndex, minX, maxX, minY, maxY, depth }) => ({ photoIndex, minX, maxX, minY, maxY, depth }));
 
   lastStats = {
     ...lastStats,
@@ -604,10 +652,92 @@ function renderScene(now) {
 }
 
 function rebuild() {
-  photos = [...starterPhotos, ...customPhotos];
+  photos = [
+    ...starterPhotos.filter((photo) => !hiddenStarterKeys.has(photoKey(photo))),
+    ...customPhotos,
+  ];
   countOutput.value = `${photos.length}`;
   textures = photos.map(loadTexture);
   buildMeshRows();
+}
+
+function resetGlobeState() {
+  Object.assign(view, defaultView);
+  Object.assign(currentView, defaultView);
+  orbit = 0;
+  targetOrbit = 0;
+  orbitVelocity = 0;
+  drag = null;
+  gesture = null;
+  wall.classList.remove("dragging");
+}
+
+function pickPhotoIndex(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (clientX - rect.left) * devicePixelRatioUsed;
+  const y = (clientY - rect.top) * devicePixelRatioUsed;
+
+  for (let index = pickTiles.length - 1; index >= 0; index -= 1) {
+    const tile = pickTiles[index];
+    if (x >= tile.minX && x <= tile.maxX && y >= tile.minY && y <= tile.maxY) {
+      return tile.photoIndex;
+    }
+  }
+
+  return -1;
+}
+
+async function deletePhotoAt(clientX, clientY) {
+  const photoIndex = pickPhotoIndex(clientX, clientY);
+  const photo = photos[photoIndex];
+  if (!photo || photos.length <= 1) return false;
+
+  orbitVelocity = 0;
+  if (photo.id) {
+    customPhotos = customPhotos.filter((customPhoto) => customPhoto.id !== photo.id);
+    await deleteStoredPhoto(photo.id);
+  } else {
+    hiddenStarterKeys.add(photoKey(photo));
+    writeHiddenStarterKeys();
+  }
+
+  resetGlobeState();
+  rebuild();
+  return true;
+}
+
+function clearLongPress() {
+  if (!longPress) return;
+  clearTimeout(longPress.timer);
+  longPress = null;
+}
+
+function startLongPress(event) {
+  clearLongPress();
+  longPress = {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    deleted: false,
+    timer: setTimeout(async () => {
+      if (!longPress || longPress.id !== event.pointerId || pointerState.size !== 1) return;
+      const didDelete = await deletePhotoAt(longPress.x, longPress.y);
+      if (!didDelete || !longPress) return;
+
+      longPress.deleted = true;
+      drag = null;
+      gesture = null;
+      pointerState.clear();
+      wall.classList.remove("dragging");
+      if (navigator.vibrate) navigator.vibrate(35);
+    }, longPressMs),
+  };
+}
+
+function updateLongPress(event) {
+  if (!longPress || longPress.id !== event.pointerId) return;
+  const moved = Math.hypot(event.clientX - longPress.x, event.clientY - longPress.y);
+  if (moved > longPressMoveLimit || pointerState.size > 1) clearLongPress();
 }
 
 async function addFiles(files) {
@@ -683,6 +813,7 @@ wall.addEventListener("pointerdown", (event) => {
   orbitVelocity = 0;
   const now = performance.now();
   if (pointerState.size === 1) {
+    startLongPress(event);
     drag = {
       id: event.pointerId,
       x: event.clientX,
@@ -691,6 +822,7 @@ wall.addEventListener("pointerdown", (event) => {
       velocity: 0,
     };
   } else if (pointerState.size === 2) {
+    clearLongPress();
     drag = null;
     startGesture();
   }
@@ -705,6 +837,7 @@ wall.addEventListener("pointerdown", (event) => {
 wall.addEventListener("pointermove", (event) => {
   if (!pointerState.has(event.pointerId)) return;
   pointerState.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  updateLongPress(event);
   if (pointerState.size >= 2) {
     updateGesture();
     return;
@@ -724,7 +857,16 @@ wall.addEventListener("pointermove", (event) => {
 
 function stopPointer(event) {
   const endingDrag = drag && drag.id === event.pointerId ? drag : null;
+  const deletedByLongPress = longPress?.deleted && longPress.id === event.pointerId;
+  clearLongPress();
   pointerState.delete(event.pointerId);
+  if (deletedByLongPress) {
+    orbitVelocity = 0;
+    drag = null;
+    gesture = null;
+    wall.classList.remove("dragging");
+    return;
+  }
   if (pointerState.size >= 2) {
     startGesture();
     return;
@@ -779,16 +921,29 @@ input.addEventListener("change", async (event) => {
 
 resetButton.addEventListener("click", async () => {
   customPhotos = [];
+  hiddenStarterKeys = new Set();
+  writeHiddenStarterKeys();
   await clearStoredPhotos();
   rebuild();
 });
 
 window.addEventListener("resize", resizeCanvas);
 
-window.__photoGlobeDebug = () => ({ ...lastStats, webgl: Boolean(gl), canvasWidth: canvas.width, canvasHeight: canvas.height });
+window.__photoGlobeDebug = () => ({
+  ...lastStats,
+  webgl: Boolean(gl),
+  canvasWidth: canvas.width,
+  canvasHeight: canvas.height,
+  hiddenStarterCount: hiddenStarterKeys.size,
+  customCount: customPhotos.length,
+  pickTileCount: pickTiles.length,
+  samplePickTile: pickTiles[pickTiles.length - 1] || null,
+  devicePixelRatioUsed,
+});
 
 async function boot() {
   if (!initWebGl()) return;
+  readHiddenStarterKeys();
   try {
     customPhotos = await readStoredPhotos();
   } catch {

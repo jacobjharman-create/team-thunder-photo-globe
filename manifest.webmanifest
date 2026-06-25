@@ -1,0 +1,19 @@
+{
+  "name": "Team Thunder Photo Globe",
+  "short_name": "Photo Globe",
+  "description": "Full-screen swipeable Team Thunder photo globe.",
+  "start_url": "./?source=pwa",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#03050a",
+  "theme_color": "#03050a",
+  "icons": [
+    {
+      "src": "app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
