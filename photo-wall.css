@@ -5,7 +5,7 @@
   --gold: #f1b735;
   --blue: #1d63d8;
   --red: #c81f28;
-  --gap: 3px;
+  --gap: 1px;
   --row: clamp(128px, 25vh, 220px);
   --radius: 7px;
   --topbar: 72px;
@@ -151,7 +151,7 @@ input {
 .stage {
   min-height: 0;
   overflow: hidden;
-  perspective: 920px;
+  perspective: 1280px;
   perspective-origin: 50% 45%;
   position: relative;
   z-index: 2;
@@ -219,7 +219,7 @@ input {
   gap: var(--gap);
   height: 100%;
   justify-content: center;
-  min-height: 520px;
+  min-height: 100%;
   transform:
     translate3d(var(--view-x, 0px), var(--view-y, 0px), 0)
     rotate(var(--view-rotate, 0deg))
@@ -248,6 +248,7 @@ input {
   contain: layout paint;
   flex: 0 0 auto;
   height: var(--tile-h);
+  margin: 0;
   overflow: hidden;
   position: relative;
   transform:
@@ -280,23 +281,23 @@ input {
 }
 
 .tile.size-wide {
-  --tile-h: clamp(98px, 16vh, 156px);
+  --tile-h: clamp(62px, 7.7vh, 94px);
 }
 
 .tile.size-small {
-  --tile-h: clamp(72px, 12vh, 112px);
+  --tile-h: clamp(48px, 6.2vh, 72px);
 }
 
 .tile.size-poster {
-  --tile-h: clamp(126px, 20vh, 190px);
+  --tile-h: clamp(76px, 9.4vh, 112px);
 }
 
 .tile.size-square {
-  --tile-h: clamp(86px, 14vh, 132px);
+  --tile-h: clamp(54px, 6.9vh, 82px);
 }
 
 .tile.size-feature {
-  --tile-h: clamp(146px, 24vh, 230px);
+  --tile-h: clamp(82px, 10.2vh, 124px);
 }
 
 .tile.is-center {
@@ -316,7 +317,7 @@ input {
 
 @media (max-width: 720px) {
   :root {
-    --gap: 3px;
+    --gap: 1px;
     --row: clamp(110px, 19vh, 150px);
     --topbar: 68px;
   }
@@ -347,26 +348,26 @@ input {
   }
 
   .track {
-    min-height: 620px;
+    min-height: 100%;
   }
 
   .tile.size-wide {
-    --tile-h: clamp(70px, 10vh, 86px);
+    --tile-h: clamp(48px, 6.2vh, 56px);
   }
 
   .tile.size-small {
-    --tile-h: clamp(52px, 7vh, 64px);
+    --tile-h: clamp(38px, 5vh, 46px);
   }
 
   .tile.size-poster {
-    --tile-h: clamp(86px, 12vh, 108px);
+    --tile-h: clamp(58px, 7.7vh, 70px);
   }
 
   .tile.size-square {
-    --tile-h: clamp(62px, 9vh, 76px);
+    --tile-h: clamp(43px, 5.7vh, 52px);
   }
 
   .tile.size-feature {
-    --tile-h: clamp(92px, 13vh, 112px);
+    --tile-h: clamp(64px, 8.4vh, 76px);
   }
 }

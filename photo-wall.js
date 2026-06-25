@@ -11,7 +11,21 @@ const starterPhotos = [
   { src: "assets/photo-wall/10-Photo-10.jpg", ratio: 0.6664 },
 ];
 
-const rowPattern = ["size-small", "size-wide", "size-square", "size-poster", "size-small", "size-feature", "size-wide"];
+const rowPattern = [
+  "size-small",
+  "size-wide",
+  "size-square",
+  "size-poster",
+  "size-small",
+  "size-feature",
+  "size-wide",
+  "size-square",
+  "size-small",
+  "size-poster",
+  "size-wide",
+  "size-small",
+  "size-square",
+];
 
 const wall = document.querySelector("#wall");
 const track = document.querySelector("#track");
@@ -28,7 +42,7 @@ let raf = 0;
 let drag = null;
 let saveTimer = 0;
 const activePointers = new Map();
-const view = { x: 0, y: 0, scale: 1, rotate: 0 };
+const view = { x: 0, y: 0, scale: 1.55, rotate: 0 };
 let gesture = null;
 let spinRaf = 0;
 let spinVelocity = 0;
@@ -122,7 +136,7 @@ function render() {
             .join(""),
         )
         .join("");
-      return `<div class="photo-row" style="--row-shift:${rowIndex * -34}px">${tiles}</div>`;
+      return `<div class="photo-row">${tiles}</div>`;
     })
     .join("");
 
@@ -132,6 +146,7 @@ function render() {
     syncTileWidths();
     measureSequence();
     wall.scrollLeft = sequenceWidth;
+    applyViewTransform();
     updateCurve();
   });
 }
@@ -247,20 +262,20 @@ function updateCurve() {
   keepInfinite();
   const tiles = track.querySelectorAll(".tile");
   const rect = wall.getBoundingClientRect();
-  const center = rect.left + rect.width / 2;
-  const radius = rect.width * 1.18;
+  const center = wall.scrollLeft + rect.width / 2;
+  const radius = rect.width * 2.6;
 
   tiles.forEach((tile) => {
-    const box = tile.getBoundingClientRect();
-    const tileCenter = box.left + box.width / 2;
+    const row = tile.parentElement;
+    const tileCenter = (row?.offsetLeft || 0) + tile.offsetLeft + tile.offsetWidth / 2;
     const distance = (tileCenter - center) / radius;
     const clamped = Math.max(-1.18, Math.min(1.18, distance));
     const abs = Math.abs(clamped);
-    const rotate = clamped * -28;
-    const z = 96 * (1 - abs) - 58 * abs;
-    const scale = 0.92 + 0.08 * (1 - abs);
-    const lift = Math.sin(clamped * Math.PI) * -6;
-    const brightness = 0.72 + 0.28 * (1 - abs * 0.55);
+    const rotate = clamped * -10;
+    const z = 36 * (1 - abs) - 8 * abs;
+    const scale = 0.992 + 0.008 * (1 - abs);
+    const lift = Math.sin(clamped * Math.PI) * -1;
+    const brightness = 0.94 + 0.06 * (1 - abs * 0.2);
 
     tile.style.setProperty("--rotate", `${rotate.toFixed(2)}deg`);
     tile.style.setProperty("--z", `${z.toFixed(2)}px`);
