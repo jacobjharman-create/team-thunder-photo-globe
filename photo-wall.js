@@ -37,6 +37,14 @@ const rowPattern = [
   "size-square",
 ];
 
+const tileHeightUnits = {
+  "size-small": 46,
+  "size-wide": 56,
+  "size-square": 52,
+  "size-poster": 70,
+  "size-feature": 76,
+};
+
 const wall = document.querySelector("#wall");
 const track = document.querySelector("#track");
 const input = document.querySelector("#photo-input");
@@ -156,31 +164,109 @@ function buildMeshRows(sourcePhotos) {
     for (let columnIndex = 0; columnIndex < columnsPerCopy * 3; columnIndex += 1) {
       const avoid = new Set();
       const left = rows[rowIndex][columnIndex - 1];
-      const above = rows[rowIndex - 1]?.[columnIndex];
-      const aboveLeft = rows[rowIndex - 1]?.[columnIndex - 1];
-      const aboveRight = rows[rowIndex - 1]?.[columnIndex + 1];
-      [left, above, aboveLeft, aboveRight].forEach((photo) => {
+      const nearbyAbove = rows[rowIndex - 1]?.slice(Math.max(0, columnIndex - 8), columnIndex + 9) || [];
+      [left, ...nearbyAbove].forEach((photo) => {
         if (photo) avoid.add(photoKey(photo));
       });
       rows[rowIndex].push(choosePhoto(sourcePhotos, avoid, random));
     }
   }
 
+  removeVisualRepeats(rows, sourcePhotos, random);
   return { columnsPerCopy, rows };
+}
+
+function estimateRowLayout(row, rowSize) {
+  const tileHeight = tileHeightUnits[rowSize] || 56;
+  const gap = 1;
+  let left = 0;
+  const tiles = row.map((photo, index) => {
+    const width = Math.max(36, tileHeight * (photo.ratio || 1));
+    const tile = { photo, index, left, right: left + width };
+    left += width + gap;
+    return tile;
+  });
+  const rowWidth = Math.max(0, left - gap);
+  const centerOffset = -rowWidth / 2;
+
+  return tiles.map((tile) => ({
+    ...tile,
+    left: tile.left + centerOffset,
+    right: tile.right + centerOffset,
+  }));
+}
+
+function findVisualAvoidKeys(layouts, rows, rowIndex, columnIndex) {
+  const avoid = new Set();
+  const current = layouts[rowIndex][columnIndex];
+  const paddedLeft = current.left - 2;
+  const paddedRight = current.right + 2;
+  const sameRowNeighbors = [
+    rows[rowIndex][columnIndex - 1],
+    rows[rowIndex][columnIndex + 1],
+  ];
+
+  sameRowNeighbors.forEach((photo) => {
+    if (photo) avoid.add(photoKey(photo));
+  });
+
+  [rowIndex - 1, rowIndex + 1].forEach((nearRowIndex) => {
+    const nearLayout = layouts[nearRowIndex];
+    if (!nearLayout) return;
+    nearLayout.forEach((tile) => {
+      if (tile.right >= paddedLeft && tile.left <= paddedRight) {
+        avoid.add(photoKey(tile.photo));
+      }
+    });
+  });
+
+  return avoid;
+}
+
+function hasVisualRepeat(layouts, rows, rowIndex, columnIndex) {
+  const key = photoKey(rows[rowIndex][columnIndex]);
+  return findVisualAvoidKeys(layouts, rows, rowIndex, columnIndex).has(key);
+}
+
+function buildLayouts(rows) {
+  return rows.map((row, index) => estimateRowLayout(row, rowPattern[index]));
+}
+
+function removeVisualRepeats(rows, sourcePhotos, random) {
+  const maxPasses = 10;
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    let changed = false;
+    const layouts = buildLayouts(rows);
+
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      for (let columnIndex = 0; columnIndex < rows[rowIndex].length; columnIndex += 1) {
+        if (!hasVisualRepeat(layouts, rows, rowIndex, columnIndex)) continue;
+
+        const avoid = findVisualAvoidKeys(layouts, rows, rowIndex, columnIndex);
+        rows[rowIndex][columnIndex] = choosePhoto(sourcePhotos, avoid, random);
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
+  }
 }
 
 function render() {
   photos = [...starterPhotos, ...customPhotos];
   const sequence = buildSequence(photos);
   const mesh = buildMeshRows(sequence);
+  const photoIndexes = new Map(photos.map((photo, index) => [photoKey(photo), index]));
   const markup = rowPattern
     .map((rowSize, rowIndex) => {
       const tiles = mesh.rows[rowIndex]
         .map((photo, index) => {
               const copy = Math.floor(index / mesh.columnsPerCopy);
               const emphasis = (index + rowIndex) % 11 === 0 ? "is-center" : "";
+              const photoIndex = photoIndexes.get(photoKey(photo)) || 0;
               return `
-                <figure class="tile ${rowSize} ${emphasis}" data-copy="${copy}" data-ratio="${photo.ratio || 1}">
+                <figure class="tile ${rowSize} ${emphasis}" data-copy="${copy}" data-photo-index="${photoIndex}" data-ratio="${photo.ratio || 1}">
                   <img src="${photo.src}" alt="Team Thunder wrestling photo" decoding="async" draggable="false" />
                 </figure>
               `;
@@ -199,6 +285,10 @@ function render() {
     Object.assign(currentView, view);
     writeViewTransform();
     updateCurve();
+    repairRenderedRepeats();
+    syncTileWidths();
+    measureSequence();
+    updateCurve();
   });
 }
 
@@ -207,6 +297,84 @@ function syncTileWidths() {
     const ratio = Number(tile.dataset.ratio) || 1;
     tile.style.width = `${Math.max(36, tile.offsetHeight * ratio)}px`;
   });
+}
+
+function tilePhotoIndex(tile) {
+  return Number(tile.dataset.photoIndex) || 0;
+}
+
+function applyPhotoToTile(tile, photoIndex) {
+  const photo = photos[photoIndex];
+  if (!photo) return;
+  tile.dataset.photoIndex = `${photoIndex}`;
+  tile.dataset.ratio = `${photo.ratio || 1}`;
+  const image = tile.querySelector("img");
+  if (image) image.src = photo.src;
+}
+
+function findRenderedAvoidIndexes(rowTiles, rowIndex, tileIndex, rects) {
+  const avoid = new Set();
+  const tile = rowTiles[rowIndex][tileIndex];
+  const tileRect = rects.get(tile);
+  const left = rowTiles[rowIndex][tileIndex - 1];
+  const right = rowTiles[rowIndex][tileIndex + 1];
+
+  [left, right].forEach((neighbor) => {
+    if (neighbor) avoid.add(tilePhotoIndex(neighbor));
+  });
+
+  [rowIndex - 1, rowIndex + 1].forEach((nearRowIndex) => {
+    const nearRow = rowTiles[nearRowIndex];
+    if (!nearRow || !tileRect) return;
+    nearRow.forEach((neighbor) => {
+      const nearRect = rects.get(neighbor);
+      if (!nearRect) return;
+      const horizontalOverlap = Math.min(tileRect.right, nearRect.right) - Math.max(tileRect.left, nearRect.left);
+      if (horizontalOverlap > 1) avoid.add(tilePhotoIndex(neighbor));
+    });
+  });
+
+  return avoid;
+}
+
+function findReplacementIndex(avoid, seed) {
+  if (!photos.length) return 0;
+  const start = seed % photos.length;
+  for (let offset = 0; offset < photos.length; offset += 1) {
+    const index = (start + offset) % photos.length;
+    if (!avoid.has(index)) return index;
+  }
+  return start;
+}
+
+function repairRenderedRepeats() {
+  if (photos.length < 2) return;
+  const maxPasses = 8;
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const rowTiles = [...track.querySelectorAll(".photo-row")].map((row) => [...row.querySelectorAll(".tile")]);
+    const rects = new Map();
+    rowTiles.flat().forEach((tile) => rects.set(tile, tile.getBoundingClientRect()));
+    let changed = false;
+
+    for (let rowIndex = 0; rowIndex < rowTiles.length; rowIndex += 1) {
+      for (let tileIndex = 0; tileIndex < rowTiles[rowIndex].length; tileIndex += 1) {
+        const tile = rowTiles[rowIndex][tileIndex];
+        const currentIndex = tilePhotoIndex(tile);
+        const avoid = findRenderedAvoidIndexes(rowTiles, rowIndex, tileIndex, rects);
+        if (!avoid.has(currentIndex)) continue;
+
+        const replacement = findReplacementIndex(avoid, currentIndex + rowIndex + tileIndex + pass);
+        if (replacement === currentIndex) continue;
+        applyPhotoToTile(tile, replacement);
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
+    syncTileWidths();
+    updateCurve();
+  }
 }
 
 function applyViewTransform() {
