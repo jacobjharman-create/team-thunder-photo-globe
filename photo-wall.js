@@ -32,6 +32,8 @@ const track = document.querySelector("#track");
 const input = document.querySelector("#photo-input");
 const resetButton = document.querySelector("#reset-photos");
 const countOutput = document.querySelector("#photo-count");
+const defaultView = { x: 0, y: 0, scale: 1.65, rotate: 0 };
+const zoomLimits = { min: 0.7, max: 5.5 };
 
 const dbName = "team-thunder-photo-wall";
 const storeName = "photos";
@@ -42,8 +44,8 @@ let raf = 0;
 let drag = null;
 let saveTimer = 0;
 const activePointers = new Map();
-const view = { x: 0, y: 0, scale: 1.55, rotate: 0 };
-const currentView = { x: 0, y: 0, scale: 1.55, rotate: 0 };
+const view = { ...defaultView };
+const currentView = { ...defaultView };
 let gesture = null;
 let spinVelocity = 0;
 let motionRaf = 0;
@@ -117,25 +119,62 @@ function buildSequence(sourcePhotos) {
   return repeated;
 }
 
+function photoKey(photo) {
+  return photo.id || photo.src;
+}
+
+function makeRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function choosePhoto(sourcePhotos, avoidKeys, random) {
+  const candidates = sourcePhotos.filter((photo) => !avoidKeys.has(photoKey(photo)));
+  const pool = candidates.length ? candidates : sourcePhotos;
+  return pool[Math.floor(random() * pool.length) % pool.length];
+}
+
+function buildMeshRows(sourcePhotos) {
+  const random = makeRandom(20260625 + sourcePhotos.length * 97);
+  const columnsPerCopy = Math.max(18, sourcePhotos.length * 2);
+  const rows = rowPattern.map(() => []);
+
+  for (let rowIndex = 0; rowIndex < rowPattern.length; rowIndex += 1) {
+    for (let columnIndex = 0; columnIndex < columnsPerCopy * 3; columnIndex += 1) {
+      const avoid = new Set();
+      const left = rows[rowIndex][columnIndex - 1];
+      const above = rows[rowIndex - 1]?.[columnIndex];
+      const aboveLeft = rows[rowIndex - 1]?.[columnIndex - 1];
+      const aboveRight = rows[rowIndex - 1]?.[columnIndex + 1];
+      [left, above, aboveLeft, aboveRight].forEach((photo) => {
+        if (photo) avoid.add(photoKey(photo));
+      });
+      rows[rowIndex].push(choosePhoto(sourcePhotos, avoid, random));
+    }
+  }
+
+  return { columnsPerCopy, rows };
+}
+
 function render() {
   photos = [...starterPhotos, ...customPhotos];
   const sequence = buildSequence(photos);
+  const mesh = buildMeshRows(sequence);
   const markup = rowPattern
     .map((rowSize, rowIndex) => {
-      const tiles = [0, 1, 2]
-        .map((copy) =>
-          sequence
-            .map((_, index) => {
-              const photo = sequence[(index + rowIndex * 3 + copy * 5) % sequence.length];
+      const tiles = mesh.rows[rowIndex]
+        .map((photo, index) => {
+              const copy = Math.floor(index / mesh.columnsPerCopy);
               const emphasis = (index + rowIndex) % 11 === 0 ? "is-center" : "";
               return `
                 <figure class="tile ${rowSize} ${emphasis}" data-copy="${copy}" data-ratio="${photo.ratio || 1}">
-                  <img src="${photo.src}" alt="Team Thunder wrestling photo" draggable="false" />
+                  <img src="${photo.src}" alt="Team Thunder wrestling photo" decoding="async" draggable="false" />
                 </figure>
               `;
             })
-            .join(""),
-        )
         .join("");
       return `<div class="photo-row">${tiles}</div>`;
     })
@@ -176,8 +215,28 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function shortestAngleDelta(target, current) {
+  let delta = target - current;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  return delta;
+}
+
 function lerp(current, target, amount) {
   return current + (target - current) * amount;
+}
+
+function clampViewTarget() {
+  view.scale = clamp(view.scale, zoomLimits.min, zoomLimits.max);
+  view.rotate = clamp(view.rotate, -34, 34);
+
+  const rect = wall.getBoundingClientRect();
+  const scaledExtraX = Math.max(0, rect.width * (view.scale - 1));
+  const scaledExtraY = Math.max(0, rect.height * (view.scale - 1));
+  const maxX = rect.width * 0.42 + scaledExtraX * 0.34;
+  const maxY = rect.height * 0.42 + scaledExtraY * 0.34;
+  view.x = clamp(view.x, -maxX, maxX);
+  view.y = clamp(view.y, -maxY, maxY);
 }
 
 function requestMotion() {
@@ -200,7 +259,7 @@ function motionStep(now) {
   currentView.x = lerp(currentView.x, view.x, ease);
   currentView.y = lerp(currentView.y, view.y, ease);
   currentView.scale = lerp(currentView.scale, view.scale, ease);
-  currentView.rotate = lerp(currentView.rotate, view.rotate, ease);
+  currentView.rotate += shortestAngleDelta(view.rotate, currentView.rotate) * ease;
   writeViewTransform();
 
   const viewSettled =
@@ -250,13 +309,20 @@ function startGesture() {
 function updateGesture() {
   if (!gesture || activePointers.size < 2) return;
   const metrics = getGestureMetrics(getPointerPair());
-  view.scale = clamp(gesture.startScale * (metrics.distance / gesture.distance), 0.45, 3.2);
+  const nextScale = clamp(gesture.startScale * (metrics.distance / gesture.distance), zoomLimits.min, zoomLimits.max);
+  const scaleDelta = nextScale / gesture.startScale;
+  const originX = gesture.centerX - wall.clientWidth / 2;
+  const originY = gesture.centerY - wall.clientHeight / 2;
+  view.scale = nextScale;
   view.x = gesture.startX + metrics.centerX - gesture.centerX;
   view.y = gesture.startY + metrics.centerY - gesture.centerY;
+  view.x += originX * (1 - scaleDelta) * 0.18;
+  view.y += originY * (1 - scaleDelta) * 0.18;
   let angleDelta = metrics.angle - gesture.angle;
   if (angleDelta > 180) angleDelta -= 360;
   if (angleDelta < -180) angleDelta += 360;
-  view.rotate = clamp(gesture.startRotate + angleDelta, -22, 22);
+  view.rotate = clamp(gesture.startRotate + angleDelta, -34, 34);
+  clampViewTarget();
   applyViewTransform();
 }
 
@@ -266,7 +332,7 @@ function stopSpin() {
 
 function startSpin(velocity) {
   stopSpin();
-  spinVelocity = clamp(velocity, -3.8, 3.8);
+  spinVelocity = clamp(velocity, -5.2, 5.2);
   if (Math.abs(spinVelocity) >= 0.012) requestMotion();
 }
 
@@ -295,7 +361,7 @@ function updateCurve() {
   const tiles = track.querySelectorAll(".tile");
   const rect = wall.getBoundingClientRect();
   const center = wall.scrollLeft + rect.width / 2;
-  const radius = rect.width * 2.6;
+  const radius = rect.width * 1.15;
 
   tiles.forEach((tile) => {
     const row = tile.parentElement;
@@ -303,11 +369,11 @@ function updateCurve() {
     const distance = (tileCenter - center) / radius;
     const clamped = Math.max(-1.18, Math.min(1.18, distance));
     const abs = Math.abs(clamped);
-    const rotate = clamped * -10;
-    const z = 36 * (1 - abs) - 8 * abs;
-    const scale = 0.992 + 0.008 * (1 - abs);
-    const lift = Math.sin(clamped * Math.PI) * -1;
-    const brightness = 0.94 + 0.06 * (1 - abs * 0.2);
+    const rotate = clamped * -30;
+    const z = 120 * (1 - abs) - 54 * abs;
+    const scale = 0.955 + 0.045 * (1 - abs);
+    const lift = Math.sin(clamped * Math.PI) * -3;
+    const brightness = 0.82 + 0.18 * (1 - abs * 0.32);
 
     tile.style.setProperty("--rotate", `${rotate.toFixed(2)}deg`);
     tile.style.setProperty("--z", `${z.toFixed(2)}px`);
@@ -368,7 +434,8 @@ wall.addEventListener("wheel", (event) => {
   if (event.ctrlKey || event.metaKey) {
     event.preventDefault();
     const delta = -event.deltaY * 0.0012;
-    view.scale = clamp(view.scale * (1 + delta), 0.45, 3.2);
+    view.scale = clamp(view.scale * (1 + delta), zoomLimits.min, zoomLimits.max);
+    clampViewTarget();
     applyViewTransform();
     return;
   }

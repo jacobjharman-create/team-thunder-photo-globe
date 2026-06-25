@@ -151,7 +151,7 @@ input {
 .stage {
   min-height: 0;
   overflow: hidden;
-  perspective: 1280px;
+  perspective: 920px;
   perspective-origin: 50% 45%;
   position: relative;
   z-index: 2;
@@ -235,6 +235,7 @@ input {
   display: flex;
   flex: 0 0 auto;
   gap: var(--gap);
+  backface-visibility: hidden;
   transform: translateX(var(--row-shift, 0px));
   transform-style: preserve-3d;
   width: max-content;
@@ -252,6 +253,7 @@ input {
   margin: 0;
   overflow: hidden;
   position: relative;
+  backface-visibility: hidden;
   transform:
     translateZ(var(--z, 0px))
     rotateY(var(--rotate, 0deg))
@@ -274,10 +276,13 @@ input {
 }
 
 .tile img {
+  display: block;
   height: 100%;
+  image-rendering: auto;
   object-fit: fill;
   pointer-events: none;
   user-select: none;
+  -webkit-user-drag: none;
   width: 100%;
 }
 
