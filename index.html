@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Team Thunder Photo Wall</title>
     <meta name="description" content="Swipeable Team Thunder photo wall with an infinite curved gallery." />
-    <link rel="stylesheet" href="photo-wall.css?v=sphere-curve" />
+    <link rel="stylesheet" href="photo-wall.css?v=webgl-globe" />
   </head>
   <body>
     <main class="applet" aria-label="Team Thunder swipeable photo wall">
@@ -30,11 +30,11 @@
         <div class="glow glow-left" aria-hidden="true"></div>
         <div class="glow glow-right" aria-hidden="true"></div>
         <div id="wall" class="wall" tabindex="0">
-          <div id="track" class="track"></div>
+          <canvas id="globe-canvas" aria-label="Interactive photo globe"></canvas>
         </div>
       </section>
     </main>
 
-    <script src="photo-wall.js?v=sphere-curve"></script>
+    <script src="photo-wall.js?v=webgl-globe"></script>
   </body>
 </html>

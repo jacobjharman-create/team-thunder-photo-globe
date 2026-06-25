@@ -5,11 +5,7 @@
   --gold: #f1b735;
   --blue: #1d63d8;
   --red: #c81f28;
-  --gap: 1px;
-  --row: clamp(128px, 25vh, 220px);
-  --radius: 7px;
   --topbar: 72px;
-  --shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
   --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -151,8 +147,6 @@ input {
 .stage {
   min-height: 0;
   overflow: hidden;
-  perspective: 760px;
-  perspective-origin: 50% 45%;
   position: relative;
   z-index: 2;
 }
@@ -191,14 +185,9 @@ input {
 .wall {
   cursor: grab;
   height: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  padding: clamp(12px, 3vh, 30px) 48vw clamp(22px, 5vh, 44px);
+  overflow: hidden;
   position: relative;
-  scrollbar-width: none;
   touch-action: none;
-  transform-style: preserve-3d;
   width: 100%;
   z-index: 3;
 }
@@ -208,107 +197,11 @@ input {
   scroll-behavior: auto;
 }
 
-.wall::-webkit-scrollbar {
-  display: none;
-}
-
-.track {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap);
-  height: 100%;
-  justify-content: center;
-  min-height: 100%;
-  transform:
-    translate3d(var(--view-x, 0px), var(--view-y, 0px), 0)
-    rotate(var(--view-rotate, 0deg))
-    scale(var(--view-scale, 1));
-  transform-origin: var(--origin-x, center) center;
-  transform-style: preserve-3d;
-  will-change: transform;
-  width: max-content;
-}
-
-.photo-row {
-  align-items: center;
-  display: flex;
-  flex: 0 0 auto;
-  gap: var(--gap);
-  backface-visibility: hidden;
-  transform: translateX(var(--row-shift, 0px));
-  transform-style: preserve-3d;
-  width: max-content;
-}
-
-.tile {
-  aspect-ratio: var(--ratio, 1);
-  background: #101724;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  contain: layout paint;
-  flex: 0 0 auto;
-  height: var(--tile-h);
-  margin: 0;
-  overflow: hidden;
-  position: relative;
-  backface-visibility: hidden;
-  transform:
-    translateZ(var(--z, 0px))
-    rotateY(var(--rotate, 0deg))
-    rotateX(var(--rotate-x, 0deg))
-    translateY(var(--lift, 0px))
-    scale(var(--scale, 1));
-  transform-origin: center center;
-  transition: box-shadow 180ms ease, filter 180ms ease;
-  will-change: transform, filter;
-  width: auto;
-}
-
-.tile::after {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.16), transparent 22%),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.28), transparent 24%, transparent 76%, rgba(0, 0, 0, 0.26));
-  content: "";
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-
-.tile img {
+#globe-canvas {
   display: block;
   height: 100%;
-  image-rendering: auto;
-  object-fit: fill;
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-drag: none;
   width: 100%;
-}
-
-.tile.size-wide {
-  --tile-h: clamp(62px, 7.7vh, 94px);
-}
-
-.tile.size-small {
-  --tile-h: clamp(48px, 6.2vh, 72px);
-}
-
-.tile.size-poster {
-  --tile-h: clamp(76px, 9.4vh, 112px);
-}
-
-.tile.size-square {
-  --tile-h: clamp(54px, 6.9vh, 82px);
-}
-
-.tile.size-feature {
-  --tile-h: clamp(82px, 10.2vh, 124px);
-}
-
-.tile.is-center {
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.58), 0 0 0 1px rgba(241, 183, 53, 0.22);
+  touch-action: none;
 }
 
 .empty-state {
@@ -324,8 +217,6 @@ input {
 
 @media (max-width: 720px) {
   :root {
-    --gap: 1px;
-    --row: clamp(110px, 19vh, 150px);
     --topbar: 68px;
   }
 
@@ -344,37 +235,8 @@ input {
     min-width: 42px;
   }
 
-  .wall {
-    padding-left: 44vw;
-    padding-right: 44vw;
-  }
-
   .icon-button {
     height: 40px;
     width: 40px;
-  }
-
-  .track {
-    min-height: 100%;
-  }
-
-  .tile.size-wide {
-    --tile-h: clamp(48px, 6.2vh, 56px);
-  }
-
-  .tile.size-small {
-    --tile-h: clamp(38px, 5vh, 46px);
-  }
-
-  .tile.size-poster {
-    --tile-h: clamp(58px, 7.7vh, 70px);
-  }
-
-  .tile.size-square {
-    --tile-h: clamp(43px, 5.7vh, 52px);
-  }
-
-  .tile.size-feature {
-    --tile-h: clamp(64px, 8.4vh, 76px);
   }
 }

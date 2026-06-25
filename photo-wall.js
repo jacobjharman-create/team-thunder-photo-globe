@@ -21,54 +21,73 @@ const starterPhotos = [
   { src: "assets/photo-wall/20-Photo-20.jpg", ratio: 0.6664 },
 ];
 
-const rowPattern = [
-  "size-small",
-  "size-wide",
-  "size-square",
-  "size-poster",
-  "size-small",
-  "size-feature",
-  "size-wide",
-  "size-square",
-  "size-small",
-  "size-poster",
-  "size-wide",
-  "size-small",
-  "size-square",
+const rowTypes = [
+  "small",
+  "wide",
+  "square",
+  "poster",
+  "small",
+  "feature",
+  "wide",
+  "square",
+  "small",
+  "poster",
+  "wide",
+  "small",
+  "square",
 ];
 
-const tileHeightUnits = {
-  "size-small": 46,
-  "size-wide": 56,
-  "size-square": 52,
-  "size-poster": 70,
-  "size-feature": 76,
+const rowHeights = {
+  small: 46,
+  wide: 56,
+  square: 52,
+  poster: 70,
+  feature: 76,
 };
 
+const canvas = document.querySelector("#globe-canvas");
 const wall = document.querySelector("#wall");
-const track = document.querySelector("#track");
 const input = document.querySelector("#photo-input");
 const resetButton = document.querySelector("#reset-photos");
 const countOutput = document.querySelector("#photo-count");
-const defaultView = { x: 0, y: 0, scale: 0.88, rotate: 0 };
-const zoomLimits = { min: 0.7, max: 5.5 };
 
 const dbName = "team-thunder-photo-wall";
 const storeName = "photos";
+const zoomLimits = { min: 0.65, max: 5.6 };
+const defaultView = { x: 0, y: 0, zoom: 0.92, rotate: 0 };
+const pointerState = new Map();
+
+let gl;
+let program;
+let buffer;
+let attribs;
+let uniforms;
 let customPhotos = [];
 let photos = [];
-let sequenceWidth = 0;
-let raf = 0;
+let textures = [];
+let meshRows = [];
+let lastTime = 0;
 let drag = null;
-let saveTimer = 0;
-const activePointers = new Map();
+let gesture = null;
+let orbit = 0;
+let targetOrbit = 0;
+let orbitVelocity = 0;
+let devicePixelRatioUsed = 1;
+let lastStats = {
+  renderer: "webgl",
+  count: 0,
+  rows: 0,
+  renderedTiles: 0,
+  uniqueSrcs: 0,
+  horizontalRepeats: 0,
+  verticalRepeats: 0,
+  zoom: defaultView.zoom,
+  fps: 0,
+};
+
 const view = { ...defaultView };
 const currentView = { ...defaultView };
-let gesture = null;
-let spinVelocity = 0;
-let motionRaf = 0;
-let lastMotionTime = 0;
-let repairTimer = 0;
+const quad = new Float32Array(30);
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -111,6 +130,51 @@ async function clearStoredPhotos() {
   });
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function lerp(current, target, amount) {
+  return current + (target - current) * amount;
+}
+
+function smoothstep(value) {
+  const t = clamp(value, 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function shortestAngleDelta(target, current) {
+  let delta = target - current;
+  if (delta > 180) delta -= 360;
+  if (delta < -180) delta += 360;
+  return delta;
+}
+
+function positiveModulo(value, size) {
+  return ((value % size) + size) % size;
+}
+
+function photoKey(photo) {
+  return photo.id || photo.src;
+}
+
+function makeRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function choosePhotoIndex(avoid, random) {
+  const candidates = [];
+  for (let index = 0; index < photos.length; index += 1) {
+    if (!avoid.has(index)) candidates.push(index);
+  }
+  const pool = candidates.length ? candidates : photos.map((_, index) => index);
+  return pool[Math.floor(random() * pool.length) % pool.length];
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -129,353 +193,441 @@ function measureImage(src) {
   });
 }
 
-function buildSequence(sourcePhotos) {
-  const minimum = 30;
-  const repeated = [];
-  while (repeated.length < minimum) {
-    sourcePhotos.forEach((photo) => repeated.push(photo));
+function createShader(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(shader) || "Shader compile failed");
   }
-  return repeated;
+  return shader;
 }
 
-function photoKey(photo) {
-  return photo.id || photo.src;
+function createProgram() {
+  const vertex = createShader(gl.VERTEX_SHADER, `
+    attribute vec2 a_position;
+    attribute vec2 a_uv;
+    attribute float a_shade;
+    varying vec2 v_uv;
+    varying float v_shade;
+
+    void main() {
+      gl_Position = vec4(a_position, 0.0, 1.0);
+      v_uv = a_uv;
+      v_shade = a_shade;
+    }
+  `);
+
+  const fragment = createShader(gl.FRAGMENT_SHADER, `
+    precision mediump float;
+    uniform sampler2D u_texture;
+    varying vec2 v_uv;
+    varying float v_shade;
+
+    void main() {
+      vec4 color = texture2D(u_texture, v_uv);
+      gl_FragColor = vec4(color.rgb * v_shade, color.a);
+    }
+  `);
+
+  const nextProgram = gl.createProgram();
+  gl.attachShader(nextProgram, vertex);
+  gl.attachShader(nextProgram, fragment);
+  gl.linkProgram(nextProgram);
+  if (!gl.getProgramParameter(nextProgram, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(nextProgram) || "Program link failed");
+  }
+  return nextProgram;
 }
 
-function makeRandom(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state = (state * 1664525 + 1013904223) >>> 0;
-    return state / 4294967296;
+function createPlaceholderTexture() {
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(
+    gl.TEXTURE_2D,
+    0,
+    gl.RGBA,
+    1,
+    1,
+    0,
+    gl.RGBA,
+    gl.UNSIGNED_BYTE,
+    new Uint8Array([14, 20, 32, 255]),
+  );
+  return texture;
+}
+
+function loadTexture(photo) {
+  const texture = createPlaceholderTexture();
+  const record = { texture, ready: false, src: photo.src };
+  const image = new Image();
+  image.onload = () => {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    record.ready = true;
+  };
+  image.onerror = () => {
+    record.ready = true;
+  };
+  image.src = photo.src;
+  return record;
+}
+
+function initWebGl() {
+  gl = canvas.getContext("webgl", {
+    alpha: true,
+    antialias: true,
+    depth: false,
+    powerPreference: "high-performance",
+    preserveDrawingBuffer: false,
+  });
+
+  if (!gl) {
+    wall.innerHTML = `<div class="empty-state">WebGL unavailable</div>`;
+    return false;
+  }
+
+  program = createProgram();
+  buffer = gl.createBuffer();
+  attribs = {
+    position: gl.getAttribLocation(program, "a_position"),
+    uv: gl.getAttribLocation(program, "a_uv"),
+    shade: gl.getAttribLocation(program, "a_shade"),
+  };
+  uniforms = {
+    texture: gl.getUniformLocation(program, "u_texture"),
+  };
+
+  gl.useProgram(program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.enableVertexAttribArray(attribs.position);
+  gl.enableVertexAttribArray(attribs.uv);
+  gl.enableVertexAttribArray(attribs.shade);
+  gl.vertexAttribPointer(attribs.position, 2, gl.FLOAT, false, 20, 0);
+  gl.vertexAttribPointer(attribs.uv, 2, gl.FLOAT, false, 20, 8);
+  gl.vertexAttribPointer(attribs.shade, 1, gl.FLOAT, false, 20, 16);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  return true;
+}
+
+function buildMeshRows() {
+  const random = makeRandom(20260625 + photos.length * 131);
+  const columns = Math.max(96, photos.length * 5);
+  const rows = rowTypes.map((type) => ({ type, tiles: [] }));
+
+  rows.forEach((row, rowIndex) => {
+    for (let column = 0; column < columns; column += 1) {
+      const avoid = new Set();
+      const left = row.tiles[column - 1];
+      if (left) avoid.add(left.photoIndex);
+      const above = rows[rowIndex - 1]?.tiles || [];
+      for (let offset = -3; offset <= 3; offset += 1) {
+        const neighbor = above[column + offset];
+        if (neighbor) avoid.add(neighbor.photoIndex);
+      }
+      const photoIndex = choosePhotoIndex(avoid, random);
+      row.tiles.push({
+        photoIndex,
+        ratio: photos[photoIndex]?.ratio || 1,
+        randomLift: (random() - 0.5) * 0.18,
+      });
+    }
+  });
+
+  rows.forEach((row, rowIndex) => {
+    const baseHeight = rowHeights[row.type] || 56;
+    let cursor = 0;
+    row.tiles.forEach((tile) => {
+      const tileWidth = Math.max(34, baseHeight * tile.ratio);
+      tile.baseWidth = tileWidth;
+      tile.baseHeight = baseHeight;
+      tile.center = cursor + tileWidth / 2;
+      cursor += tileWidth + 3;
+    });
+    row.width = Math.max(1, cursor - 3);
+    row.vertical = (rowIndex - (rows.length - 1) / 2) * 58;
+  });
+
+  meshRows = rows;
+  lastStats.horizontalRepeats = countHorizontalRepeats(rows);
+  lastStats.verticalRepeats = countVerticalRepeats(rows);
+}
+
+function countHorizontalRepeats(rows) {
+  let repeats = 0;
+  rows.forEach((row) => {
+    for (let index = 1; index < row.tiles.length; index += 1) {
+      if (row.tiles[index].photoIndex === row.tiles[index - 1].photoIndex) repeats += 1;
+    }
+  });
+  return repeats;
+}
+
+function countVerticalRepeats(rows) {
+  let repeats = 0;
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex].tiles;
+    const above = rows[rowIndex - 1].tiles;
+    row.forEach((tile, index) => {
+      for (let offset = -2; offset <= 2; offset += 1) {
+        if (above[index + offset]?.photoIndex === tile.photoIndex) repeats += 1;
+      }
+    });
+  }
+  return repeats;
+}
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const width = Math.max(1, Math.round(rect.width * dpr));
+  const height = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+    devicePixelRatioUsed = dpr;
+    gl.viewport(0, 0, width, height);
+  }
+}
+
+function projectPoint(point, cameraDistance, centerX, centerY, screenRotation) {
+  const depth = cameraDistance - point.z;
+  const perspective = cameraDistance / Math.max(1, depth);
+  let x = centerX + point.x * perspective;
+  let y = centerY - point.y * perspective;
+
+  if (screenRotation) {
+    const dx = x - canvas.width / 2;
+    const dy = y - canvas.height / 2;
+    const cos = Math.cos(screenRotation);
+    const sin = Math.sin(screenRotation);
+    x = canvas.width / 2 + dx * cos - dy * sin;
+    y = canvas.height / 2 + dx * sin + dy * cos;
+  }
+
+  return {
+    x,
+    y,
+    clipX: (x / canvas.width) * 2 - 1,
+    clipY: 1 - (y / canvas.height) * 2,
+    perspective,
   };
 }
 
-function choosePhoto(sourcePhotos, avoidKeys, random) {
-  const candidates = sourcePhotos.filter((photo) => !avoidKeys.has(photoKey(photo)));
-  const pool = candidates.length ? candidates : sourcePhotos;
-  return pool[Math.floor(random() * pool.length) % pool.length];
+function pushVertex(target, offset, point, uvX, uvY, shade) {
+  target[offset] = point.clipX;
+  target[offset + 1] = point.clipY;
+  target[offset + 2] = uvX;
+  target[offset + 3] = uvY;
+  target[offset + 4] = shade;
 }
 
-function buildMeshRows(sourcePhotos) {
-  const random = makeRandom(20260625 + sourcePhotos.length * 97);
-  const columnsPerCopy = Math.max(18, sourcePhotos.length * 2);
-  const rows = rowPattern.map(() => []);
+function drawTile(renderTile) {
+  const { points, texture, shade } = renderTile;
+  pushVertex(quad, 0, points[0], 0, 0, shade);
+  pushVertex(quad, 5, points[1], 1, 0, shade);
+  pushVertex(quad, 10, points[2], 0, 1, shade);
+  pushVertex(quad, 15, points[2], 0, 1, shade);
+  pushVertex(quad, 20, points[1], 1, 0, shade);
+  pushVertex(quad, 25, points[3], 1, 1, shade);
 
-  for (let rowIndex = 0; rowIndex < rowPattern.length; rowIndex += 1) {
-    for (let columnIndex = 0; columnIndex < columnsPerCopy * 3; columnIndex += 1) {
-      const avoid = new Set();
-      const left = rows[rowIndex][columnIndex - 1];
-      const nearbyAbove = rows[rowIndex - 1]?.slice(Math.max(0, columnIndex - 8), columnIndex + 9) || [];
-      [left, ...nearbyAbove].forEach((photo) => {
-        if (photo) avoid.add(photoKey(photo));
-      });
-      rows[rowIndex].push(choosePhoto(sourcePhotos, avoid, random));
-    }
-  }
-
-  removeVisualRepeats(rows, sourcePhotos, random);
-  return { columnsPerCopy, rows };
+  gl.bindTexture(gl.TEXTURE_2D, texture.texture);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STREAM_DRAW);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
 }
 
-function estimateRowLayout(row, rowSize) {
-  const tileHeight = tileHeightUnits[rowSize] || 56;
-  const gap = 1;
-  let left = 0;
-  const tiles = row.map((photo, index) => {
-    const width = Math.max(36, tileHeight * (photo.ratio || 1));
-    const tile = { photo, index, left, right: left + width };
-    left += width + gap;
-    return tile;
-  });
-  const rowWidth = Math.max(0, left - gap);
-  const centerOffset = -rowWidth / 2;
+function getGlobeParameters() {
+  const width = canvas.width;
+  const height = canvas.height;
+  const zoomProgress = smoothstep((currentView.zoom - zoomLimits.min) / (zoomLimits.max - zoomLimits.min));
+  const baseRadius = Math.min(width, height) * 0.9;
+  const radius = baseRadius * (1 + zoomProgress * 4.7);
+  const tileScale = currentView.zoom / (1 + zoomProgress * 0.42);
+  const centerX = width * 0.68 + currentView.x * devicePixelRatioUsed;
+  const centerY = height * 0.53 + currentView.y * devicePixelRatioUsed;
+  const cameraDistance = radius * (2.25 + zoomProgress * 2.1);
 
-  return tiles.map((tile) => ({
-    ...tile,
-    left: tile.left + centerOffset,
-    right: tile.right + centerOffset,
-  }));
+  return {
+    width,
+    height,
+    zoomProgress,
+    sphereStrength: 1 - zoomProgress,
+    radius,
+    tileScale,
+    centerX,
+    centerY,
+    cameraDistance,
+    screenRotation: currentView.rotate * Math.PI / 180,
+  };
 }
 
-function findVisualAvoidKeys(layouts, rows, rowIndex, columnIndex) {
-  const avoid = new Set();
-  const current = layouts[rowIndex][columnIndex];
-  const paddedLeft = current.left - 2;
-  const paddedRight = current.right + 2;
-  const sameRowNeighbors = [
-    rows[rowIndex][columnIndex - 1],
-    rows[rowIndex][columnIndex + 1],
-  ];
+function renderScene(now) {
+  resizeCanvas();
+  const dt = lastTime ? Math.min(48, now - lastTime) : 16.67;
+  lastTime = now;
 
-  sameRowNeighbors.forEach((photo) => {
-    if (photo) avoid.add(photoKey(photo));
-  });
+  orbit += orbitVelocity * dt;
+  targetOrbit = orbit;
+  orbitVelocity *= Math.pow(0.944, dt / 16.67);
+  if (Math.abs(orbitVelocity) < 0.004) orbitVelocity = 0;
 
-  [rowIndex - 1, rowIndex + 1].forEach((nearRowIndex) => {
-    const nearLayout = layouts[nearRowIndex];
-    if (!nearLayout) return;
-    nearLayout.forEach((tile) => {
-      if (tile.right >= paddedLeft && tile.left <= paddedRight) {
-        avoid.add(photoKey(tile.photo));
-      }
-    });
-  });
-
-  return avoid;
-}
-
-function hasVisualRepeat(layouts, rows, rowIndex, columnIndex) {
-  const key = photoKey(rows[rowIndex][columnIndex]);
-  return findVisualAvoidKeys(layouts, rows, rowIndex, columnIndex).has(key);
-}
-
-function buildLayouts(rows) {
-  return rows.map((row, index) => estimateRowLayout(row, rowPattern[index]));
-}
-
-function removeVisualRepeats(rows, sourcePhotos, random) {
-  const maxPasses = 10;
-
-  for (let pass = 0; pass < maxPasses; pass += 1) {
-    let changed = false;
-    const layouts = buildLayouts(rows);
-
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-      for (let columnIndex = 0; columnIndex < rows[rowIndex].length; columnIndex += 1) {
-        if (!hasVisualRepeat(layouts, rows, rowIndex, columnIndex)) continue;
-
-        const avoid = findVisualAvoidKeys(layouts, rows, rowIndex, columnIndex);
-        rows[rowIndex][columnIndex] = choosePhoto(sourcePhotos, avoid, random);
-        changed = true;
-      }
-    }
-
-    if (!changed) break;
-  }
-}
-
-function render() {
-  photos = [...starterPhotos, ...customPhotos];
-  const sequence = buildSequence(photos);
-  const mesh = buildMeshRows(sequence);
-  const photoIndexes = new Map(photos.map((photo, index) => [photoKey(photo), index]));
-  const markup = rowPattern
-    .map((rowSize, rowIndex) => {
-      const tiles = mesh.rows[rowIndex]
-        .map((photo, index) => {
-              const copy = Math.floor(index / mesh.columnsPerCopy);
-              const emphasis = (index + rowIndex) % 11 === 0 ? "is-center" : "";
-              const photoIndex = photoIndexes.get(photoKey(photo)) || 0;
-              return `
-                <figure class="tile ${rowSize} ${emphasis}" data-copy="${copy}" data-photo-index="${photoIndex}" data-ratio="${photo.ratio || 1}">
-                  <img src="${photo.src}" alt="Team Thunder wrestling photo" decoding="async" draggable="false" />
-                </figure>
-              `;
-            })
-        .join("");
-      return `<div class="photo-row">${tiles}</div>`;
-    })
-    .join("");
-
-  track.innerHTML = markup || `<div class="empty-state">Add photos</div>`;
-  countOutput.value = `${photos.length}`;
-  requestAnimationFrame(() => {
-    syncTileWidths();
-    measureSequence();
-    wall.scrollLeft = sequenceWidth;
-    Object.assign(currentView, view);
-    writeViewTransform();
-    updateCurve();
-    repairRenderedRepeats();
-    syncTileWidths();
-    measureSequence();
-    updateCurve();
-  });
-}
-
-function syncTileWidths() {
-  track.querySelectorAll(".tile").forEach((tile) => {
-    const ratio = Number(tile.dataset.ratio) || 1;
-    tile.style.width = `${Math.max(36, tile.offsetHeight * ratio)}px`;
-  });
-}
-
-function tilePhotoIndex(tile) {
-  return Number(tile.dataset.photoIndex) || 0;
-}
-
-function applyPhotoToTile(tile, photoIndex) {
-  const photo = photos[photoIndex];
-  if (!photo) return;
-  tile.dataset.photoIndex = `${photoIndex}`;
-  tile.dataset.ratio = `${photo.ratio || 1}`;
-  const image = tile.querySelector("img");
-  if (image) image.src = photo.src;
-}
-
-function findRenderedAvoidIndexes(rowTiles, rowIndex, tileIndex, rects) {
-  const avoid = new Set();
-  const tile = rowTiles[rowIndex][tileIndex];
-  const tileRect = rects.get(tile);
-  const left = rowTiles[rowIndex][tileIndex - 1];
-  const right = rowTiles[rowIndex][tileIndex + 1];
-
-  [left, right].forEach((neighbor) => {
-    if (neighbor) avoid.add(tilePhotoIndex(neighbor));
-  });
-
-  [rowIndex - 1, rowIndex + 1].forEach((nearRowIndex) => {
-    const nearRow = rowTiles[nearRowIndex];
-    if (!nearRow || !tileRect) return;
-    nearRow.forEach((neighbor) => {
-      const nearRect = rects.get(neighbor);
-      if (!nearRect) return;
-      const horizontalOverlap = Math.min(tileRect.right, nearRect.right) - Math.max(tileRect.left, nearRect.left);
-      if (horizontalOverlap > 1) avoid.add(tilePhotoIndex(neighbor));
-    });
-  });
-
-  return avoid;
-}
-
-function findReplacementIndex(avoid, seed) {
-  if (!photos.length) return 0;
-  const start = seed % photos.length;
-  for (let offset = 0; offset < photos.length; offset += 1) {
-    const index = (start + offset) % photos.length;
-    if (!avoid.has(index)) return index;
-  }
-  return start;
-}
-
-function repairRenderedRepeats() {
-  if (photos.length < 2) return;
-  const maxPasses = 8;
-
-  for (let pass = 0; pass < maxPasses; pass += 1) {
-    const rowTiles = [...track.querySelectorAll(".photo-row")].map((row) => [...row.querySelectorAll(".tile")]);
-    const rects = new Map();
-    rowTiles.flat().forEach((tile) => rects.set(tile, tile.getBoundingClientRect()));
-    let changed = false;
-
-    for (let rowIndex = 0; rowIndex < rowTiles.length; rowIndex += 1) {
-      for (let tileIndex = 0; tileIndex < rowTiles[rowIndex].length; tileIndex += 1) {
-        const tile = rowTiles[rowIndex][tileIndex];
-        const currentIndex = tilePhotoIndex(tile);
-        const avoid = findRenderedAvoidIndexes(rowTiles, rowIndex, tileIndex, rects);
-        if (!avoid.has(currentIndex)) continue;
-
-        const replacement = findReplacementIndex(avoid, currentIndex + rowIndex + tileIndex + pass);
-        if (replacement === currentIndex) continue;
-        applyPhotoToTile(tile, replacement);
-        changed = true;
-      }
-    }
-
-    if (!changed) break;
-    syncTileWidths();
-    updateCurve();
-  }
-}
-
-function scheduleRenderedRepair() {
-  clearTimeout(repairTimer);
-  repairTimer = setTimeout(() => {
-    repairTimer = 0;
-    repairRenderedRepeats();
-    syncTileWidths();
-    measureSequence();
-    updateCurve();
-  }, 180);
-}
-
-function applyViewTransform() {
-  requestMotion();
-}
-
-function writeViewTransform() {
-  track.style.setProperty("--origin-x", `${(wall.scrollLeft + wall.clientWidth / 2).toFixed(2)}px`);
-  track.style.setProperty("--view-x", `${currentView.x.toFixed(2)}px`);
-  track.style.setProperty("--view-y", `${currentView.y.toFixed(2)}px`);
-  track.style.setProperty("--view-scale", currentView.scale.toFixed(4));
-  track.style.setProperty("--view-rotate", `${currentView.rotate.toFixed(2)}deg`);
-  scheduleCurve();
-  scheduleRenderedRepair();
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function shortestAngleDelta(target, current) {
-  let delta = target - current;
-  if (delta > 180) delta -= 360;
-  if (delta < -180) delta += 360;
-  return delta;
-}
-
-function lerp(current, target, amount) {
-  return current + (target - current) * amount;
-}
-
-function smoothstep(value) {
-  const t = clamp(value, 0, 1);
-  return t * t * (3 - 2 * t);
-}
-
-function clampViewTarget() {
-  view.scale = clamp(view.scale, zoomLimits.min, zoomLimits.max);
-  view.rotate = clamp(view.rotate, -34, 34);
-
-  const rect = wall.getBoundingClientRect();
-  const scaledExtraX = Math.max(0, rect.width * (view.scale - 1));
-  const scaledExtraY = Math.max(0, rect.height * (view.scale - 1));
-  const maxX = rect.width * 0.42 + scaledExtraX * 0.34;
-  const maxY = rect.height * 0.42 + scaledExtraY * 0.34;
-  view.x = clamp(view.x, -maxX, maxX);
-  view.y = clamp(view.y, -maxY, maxY);
-}
-
-function requestMotion() {
-  if (!motionRaf) motionRaf = requestAnimationFrame(motionStep);
-}
-
-function motionStep(now) {
-  if (!lastMotionTime) lastMotionTime = now;
-  const dt = Math.min(40, now - lastMotionTime);
-  lastMotionTime = now;
-
-  if (Math.abs(spinVelocity) > 0.001) {
-    wall.scrollLeft += spinVelocity * dt;
-    keepInfinite();
-    spinVelocity *= Math.pow(0.955, dt / 16.67);
-    if (Math.abs(spinVelocity) < 0.012) spinVelocity = 0;
-  }
-
-  const ease = 1 - Math.exp(-dt / 58);
+  const ease = 1 - Math.exp(-dt / 70);
   currentView.x = lerp(currentView.x, view.x, ease);
   currentView.y = lerp(currentView.y, view.y, ease);
-  currentView.scale = lerp(currentView.scale, view.scale, ease);
+  currentView.zoom = lerp(currentView.zoom, view.zoom, ease);
   currentView.rotate += shortestAngleDelta(view.rotate, currentView.rotate) * ease;
-  writeViewTransform();
 
-  const viewSettled =
-    Math.abs(currentView.x - view.x) < 0.05 &&
-    Math.abs(currentView.y - view.y) < 0.05 &&
-    Math.abs(currentView.scale - view.scale) < 0.001 &&
-    Math.abs(currentView.rotate - view.rotate) < 0.03;
+  gl.clearColor(0, 0, 0, 0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(program);
+  gl.uniform1i(uniforms.texture, 0);
 
-  if (spinVelocity || activePointers.size || !viewSettled) {
-    motionRaf = requestAnimationFrame(motionStep);
-    return;
+  const params = getGlobeParameters();
+  const rowGap = 5 * devicePixelRatioUsed;
+  const drawQueue = [];
+  const visiblePhotos = new Set();
+
+  meshRows.forEach((row) => {
+    const rowHeight = rowHeights[row.type] * devicePixelRatioUsed * params.tileScale;
+    const rowArc = row.width * devicePixelRatioUsed * params.tileScale;
+    const rowVertical = row.vertical * devicePixelRatioUsed * params.tileScale;
+    const copyOffset = positiveModulo(orbit * devicePixelRatioUsed, rowArc);
+
+    row.tiles.forEach((tile) => {
+      const tileWidth = tile.baseWidth * devicePixelRatioUsed * params.tileScale;
+      const tileHeight = rowHeight;
+      const tileArcCenter = tile.center * devicePixelRatioUsed * params.tileScale;
+
+      for (let copy = -2; copy <= 2; copy += 1) {
+        const surfaceX = tileArcCenter + copy * rowArc - copyOffset - rowArc / 2;
+        const latitude = clamp((rowVertical + tile.randomLift * rowHeight) / params.radius, -1.1, 1.1);
+        const longitude = surfaceX / params.radius;
+        if (Math.abs(longitude) > 1.72) continue;
+
+        const sinLon = Math.sin(longitude);
+        const cosLon = Math.cos(longitude);
+        const sinLat = Math.sin(latitude);
+        const cosLat = Math.cos(latitude);
+        const normal = {
+          x: cosLat * sinLon,
+          y: sinLat,
+          z: cosLat * cosLon,
+        };
+        if (normal.z < -0.08) continue;
+
+        const center = {
+          x: params.radius * normal.x,
+          y: params.radius * normal.y,
+          z: params.radius * normal.z,
+        };
+        const right = { x: cosLon, y: 0, z: -sinLon };
+        const up = { x: -sinLat * sinLon, y: cosLat, z: -sinLat * cosLon };
+        const halfW = tileWidth / 2;
+        const halfH = tileHeight / 2;
+        const corners = [
+          {
+            x: center.x - right.x * halfW - up.x * halfH,
+            y: center.y - right.y * halfW - up.y * halfH,
+            z: center.z - right.z * halfW - up.z * halfH,
+          },
+          {
+            x: center.x + right.x * halfW - up.x * halfH,
+            y: center.y + right.y * halfW - up.y * halfH,
+            z: center.z + right.z * halfW - up.z * halfH,
+          },
+          {
+            x: center.x - right.x * halfW + up.x * halfH,
+            y: center.y - right.y * halfW + up.y * halfH,
+            z: center.z - right.z * halfW + up.z * halfH,
+          },
+          {
+            x: center.x + right.x * halfW + up.x * halfH,
+            y: center.y + right.y * halfW + up.y * halfH,
+            z: center.z + right.z * halfW + up.z * halfH,
+          },
+        ];
+
+        const points = corners.map((corner) => projectPoint(corner, params.cameraDistance, params.centerX, params.centerY, params.screenRotation));
+        const minX = Math.min(...points.map((point) => point.x));
+        const maxX = Math.max(...points.map((point) => point.x));
+        const minY = Math.min(...points.map((point) => point.y));
+        const maxY = Math.max(...points.map((point) => point.y));
+        if (maxX < -80 || minX > params.width + 80 || maxY < -80 || minY > params.height + 80) continue;
+
+        const edge = clamp(Math.hypot(longitude / 1.34, latitude / 0.98), 0, 1);
+        const shade = 0.54 + 0.46 * (normal.z * 0.72 + 0.28) * (1 - edge * 0.26);
+        const texture = textures[tile.photoIndex] || textures[0];
+        drawQueue.push({
+          depth: center.z,
+          points,
+          texture,
+          shade,
+          photoIndex: tile.photoIndex,
+        });
+        visiblePhotos.add(tile.photoIndex);
+      }
+    });
+  });
+
+  drawQueue.sort((a, b) => a.depth - b.depth);
+  drawQueue.forEach(drawTile);
+
+  lastStats = {
+    ...lastStats,
+    renderer: "webgl",
+    count: photos.length,
+    rows: meshRows.length,
+    renderedTiles: drawQueue.length,
+    uniqueSrcs: visiblePhotos.size,
+    zoom: Number(currentView.zoom.toFixed(3)),
+    fps: Number((1000 / dt).toFixed(1)),
+    horizontalRepeats: countHorizontalRepeats(meshRows),
+    verticalRepeats: countVerticalRepeats(meshRows),
+  };
+
+  requestAnimationFrame(renderScene);
+}
+
+function rebuild() {
+  photos = [...starterPhotos, ...customPhotos];
+  countOutput.value = `${photos.length}`;
+  textures = photos.map(loadTexture);
+  buildMeshRows();
+}
+
+async function addFiles(files) {
+  const imageFiles = [...files].filter((file) => file.type.startsWith("image/"));
+  if (!imageFiles.length) return;
+
+  const additions = [];
+  for (const file of imageFiles) {
+    const src = await fileToDataUrl(file);
+    const ratio = await measureImage(src);
+    const photo = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      src,
+      ratio,
+    };
+    additions.push(photo);
+    await writeStoredPhoto(photo);
   }
 
-  motionRaf = 0;
-  lastMotionTime = 0;
+  customPhotos = [...customPhotos, ...additions];
+  rebuild();
 }
 
 function getPointerPair() {
-  return [...activePointers.values()].slice(0, 2);
+  return [...pointerState.values()].slice(0, 2);
 }
 
 function getGestureMetrics(points) {
@@ -498,130 +650,122 @@ function startGesture() {
     ...metrics,
     startX: view.x,
     startY: view.y,
-    startScale: view.scale,
+    startZoom: view.zoom,
     startRotate: view.rotate,
   };
 }
 
 function updateGesture() {
-  if (!gesture || activePointers.size < 2) return;
+  if (!gesture || pointerState.size < 2) return;
   const metrics = getGestureMetrics(getPointerPair());
-  const nextScale = clamp(gesture.startScale * (metrics.distance / gesture.distance), zoomLimits.min, zoomLimits.max);
-  const scaleDelta = nextScale / gesture.startScale;
+  const nextZoom = clamp(gesture.startZoom * (metrics.distance / gesture.distance), zoomLimits.min, zoomLimits.max);
+  const zoomDelta = nextZoom / gesture.startZoom;
   const originX = gesture.centerX - wall.clientWidth / 2;
   const originY = gesture.centerY - wall.clientHeight / 2;
-  view.scale = nextScale;
-  view.x = gesture.startX + metrics.centerX - gesture.centerX;
-  view.y = gesture.startY + metrics.centerY - gesture.centerY;
-  view.x += originX * (1 - scaleDelta) * 0.18;
-  view.y += originY * (1 - scaleDelta) * 0.18;
+  view.zoom = nextZoom;
+  view.x = gesture.startX + metrics.centerX - gesture.centerX + originX * (1 - zoomDelta) * 0.16;
+  view.y = gesture.startY + metrics.centerY - gesture.centerY + originY * (1 - zoomDelta) * 0.16;
+
   let angleDelta = metrics.angle - gesture.angle;
   if (angleDelta > 180) angleDelta -= 360;
   if (angleDelta < -180) angleDelta += 360;
-  view.rotate = clamp(gesture.startRotate + angleDelta, -34, 34);
-  clampViewTarget();
-  applyViewTransform();
+  view.rotate = clamp(gesture.startRotate + angleDelta, -36, 36);
 }
 
-function stopSpin() {
-  spinVelocity = 0;
-}
+wall.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  pointerState.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  orbitVelocity = 0;
+  const now = performance.now();
+  if (pointerState.size === 1) {
+    drag = {
+      id: event.pointerId,
+      x: event.clientX,
+      lastX: event.clientX,
+      lastTime: now,
+      velocity: 0,
+    };
+  } else if (pointerState.size === 2) {
+    drag = null;
+    startGesture();
+  }
+  wall.classList.add("dragging");
+  try {
+    wall.setPointerCapture(event.pointerId);
+  } catch {
+    // Pointer capture can fail in synthetic browser tests.
+  }
+});
 
-function startSpin(velocity) {
-  stopSpin();
-  spinVelocity = clamp(velocity, -5.2, 5.2);
-  if (Math.abs(spinVelocity) >= 0.012) requestMotion();
-}
-
-function measureSequence() {
-  const secondCopy = track.querySelector('.photo-row [data-copy="1"]');
-  const thirdCopy = track.querySelector('.photo-row [data-copy="2"]');
-  if (!secondCopy || !thirdCopy) {
-    sequenceWidth = track.scrollWidth / 3;
+wall.addEventListener("pointermove", (event) => {
+  if (!pointerState.has(event.pointerId)) return;
+  pointerState.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (pointerState.size >= 2) {
+    updateGesture();
     return;
   }
-  sequenceWidth = thirdCopy.offsetLeft - secondCopy.offsetLeft;
-}
+  if (!drag || drag.id !== event.pointerId) return;
 
-function keepInfinite() {
-  if (!sequenceWidth) return;
-  if (wall.scrollLeft < sequenceWidth * 0.38) {
-    wall.scrollLeft += sequenceWidth;
-  } else if (wall.scrollLeft > sequenceWidth * 1.62) {
-    wall.scrollLeft -= sequenceWidth;
+  const now = performance.now();
+  const dx = event.clientX - drag.lastX;
+  const dt = Math.max(1, now - drag.lastTime);
+  const movement = -dx * (1.8 / Math.max(0.7, currentView.zoom));
+  orbit += movement;
+  orbitVelocity = orbitVelocity * 0.68 + (movement / dt) * 0.32;
+  drag.lastX = event.clientX;
+  drag.lastTime = now;
+  drag.velocity = orbitVelocity;
+});
+
+function stopPointer(event) {
+  const endingDrag = drag && drag.id === event.pointerId ? drag : null;
+  pointerState.delete(event.pointerId);
+  if (pointerState.size >= 2) {
+    startGesture();
+    return;
   }
-}
-
-function updateCurve() {
-  raf = 0;
-  keepInfinite();
-  const tiles = track.querySelectorAll(".tile");
-  const rect = wall.getBoundingClientRect();
-  track.style.setProperty("--origin-x", `${(wall.scrollLeft + rect.width / 2).toFixed(2)}px`);
-  const centerX = wall.scrollLeft + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
-  const zoomProgress = smoothstep((currentView.scale - zoomLimits.min) / (zoomLimits.max - zoomLimits.min));
-  const sphere = 1 - zoomProgress;
-  const radiusX = rect.width * (0.42 + zoomProgress * 1.45);
-  const radiusY = rect.height * (0.36 + zoomProgress * 1.35);
-  const maxRotateY = 18 + sphere * 62;
-  const maxRotateX = 8 + sphere * 40;
-  const frontDepth = 34 + sphere * 74;
-  const backDepth = 58 + sphere * 300;
-  const edgeScaleDrop = 0.025 + sphere * 0.16;
-
-  tiles.forEach((tile) => {
-    const row = tile.parentElement;
-    const tileCenterX = (row?.offsetLeft || 0) + tile.offsetLeft + tile.offsetWidth / 2;
-    const tileRect = tile.getBoundingClientRect();
-    const tileCenterY = tileRect.top + tileRect.height / 2;
-    const xDistance = (tileCenterX - centerX) / radiusX;
-    const yDistance = (tileCenterY - centerY) / radiusY;
-    const clampedX = clamp(xDistance, -1.24, 1.24);
-    const clampedY = clamp(yDistance, -1.1, 1.1);
-    const radial = clamp(Math.hypot(clampedX, clampedY), 0, 1.28);
-    const edge = Math.min(1, radial);
-    const rotate = clampedX * -maxRotateY;
-    const rotateX = clampedY * maxRotateX;
-    const z = frontDepth * (1 - edge) - backDepth * edge;
-    const scale = 1 - edge * edgeScaleDrop;
-    const lift = clampedY * sphere * -18 + Math.sin(clampedX * Math.PI) * sphere * -5;
-    const brightness = 0.72 + 0.28 * (1 - edge * 0.52);
-
-    tile.style.setProperty("--rotate", `${rotate.toFixed(2)}deg`);
-    tile.style.setProperty("--rotate-x", `${rotateX.toFixed(2)}deg`);
-    tile.style.setProperty("--z", `${z.toFixed(2)}px`);
-    tile.style.setProperty("--scale", scale.toFixed(3));
-    tile.style.setProperty("--lift", `${lift.toFixed(2)}px`);
-    tile.style.filter = `brightness(${brightness.toFixed(3)}) saturate(1.12)`;
-    tile.style.zIndex = String(Math.round((1 - edge) * 1000));
-  });
-}
-
-function scheduleCurve() {
-  if (!raf) raf = requestAnimationFrame(updateCurve);
-}
-
-async function addFiles(files) {
-  const imageFiles = [...files].filter((file) => file.type.startsWith("image/"));
-  if (!imageFiles.length) return;
-
-  const additions = [];
-  for (const file of imageFiles) {
-    const src = await fileToDataUrl(file);
-    const ratio = await measureImage(src);
-    const photo = {
-      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      src,
-      ratio,
+  if (pointerState.size === 1) {
+    const [remaining] = pointerState.entries();
+    drag = {
+      id: remaining[0],
+      x: remaining[1].x,
+      lastX: remaining[1].x,
+      lastTime: performance.now(),
+      velocity: 0,
     };
-    additions.push(photo);
-    await writeStoredPhoto(photo);
+    gesture = null;
+    return;
+  }
+  if (endingDrag) orbitVelocity = endingDrag.velocity;
+  drag = null;
+  gesture = null;
+  wall.classList.remove("dragging");
+}
+
+wall.addEventListener("pointerup", stopPointer);
+wall.addEventListener("pointercancel", stopPointer);
+
+wall.addEventListener("wheel", (event) => {
+  if (event.ctrlKey || event.metaKey) {
+    event.preventDefault();
+    const previousZoom = view.zoom;
+    const nextZoom = clamp(view.zoom * (1 - event.deltaY * 0.0012), zoomLimits.min, zoomLimits.max);
+    const zoomDelta = nextZoom / previousZoom;
+    const rect = wall.getBoundingClientRect();
+    const originX = event.clientX - rect.left - rect.width / 2;
+    const originY = event.clientY - rect.top - rect.height / 2;
+    view.zoom = nextZoom;
+    view.x += originX * (1 - zoomDelta) * 0.18;
+    view.y += originY * (1 - zoomDelta) * 0.18;
+    return;
   }
 
-  customPhotos = [...customPhotos, ...additions];
-  render();
-}
+  if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+    event.preventDefault();
+    orbit += event.deltaY * 0.9;
+    orbitVelocity = event.deltaY * 0.018;
+  }
+}, { passive: false });
 
 input.addEventListener("change", async (event) => {
   await addFiles(event.target.files || []);
@@ -631,130 +775,22 @@ input.addEventListener("change", async (event) => {
 resetButton.addEventListener("click", async () => {
   customPhotos = [];
   await clearStoredPhotos();
-  render();
+  rebuild();
 });
 
-wall.addEventListener("scroll", scheduleCurve, { passive: true });
-window.addEventListener("resize", () => {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    syncTileWidths();
-    measureSequence();
-    scheduleCurve();
-  }, 120);
-});
+window.addEventListener("resize", resizeCanvas);
 
-wall.addEventListener("wheel", (event) => {
-  if (event.ctrlKey || event.metaKey) {
-    event.preventDefault();
-    const delta = -event.deltaY * 0.0012;
-    const previousScale = view.scale;
-    const nextScale = clamp(view.scale * (1 + delta), zoomLimits.min, zoomLimits.max);
-    const scaleDelta = nextScale / previousScale;
-    const rect = wall.getBoundingClientRect();
-    const originX = event.clientX - rect.left - rect.width / 2;
-    const originY = event.clientY - rect.top - rect.height / 2;
-    view.scale = nextScale;
-    view.x += originX * (1 - scaleDelta) * 0.22;
-    view.y += originY * (1 - scaleDelta) * 0.22;
-    clampViewTarget();
-    applyViewTransform();
-    return;
-  }
-  if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-  event.preventDefault();
-  wall.scrollLeft += event.deltaY;
-}, { passive: false });
+window.__photoGlobeDebug = () => ({ ...lastStats, webgl: Boolean(gl), canvasWidth: canvas.width, canvasHeight: canvas.height });
 
-wall.addEventListener("pointerdown", (event) => {
-  if (event.pointerType === "mouse" && event.button !== 0) return;
-  stopSpin();
-  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  const now = performance.now();
-  if (activePointers.size === 1) {
-    drag = {
-      id: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      scrollLeft: wall.scrollLeft,
-      lastX: event.clientX,
-      lastY: event.clientY,
-      lastScrollLeft: wall.scrollLeft,
-      lastTime: now,
-      velocity: 0,
-    };
-  } else if (activePointers.size === 2) {
-    drag = null;
-    startGesture();
-  }
-  wall.classList.add("dragging");
+async function boot() {
+  if (!initWebGl()) return;
   try {
-    wall.setPointerCapture(event.pointerId);
+    customPhotos = await readStoredPhotos();
   } catch {
-    // Synthetic pointer tests do not always register an active pointer capture target.
+    customPhotos = [];
   }
-});
-
-wall.addEventListener("pointermove", (event) => {
-  if (!activePointers.has(event.pointerId)) return;
-  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  if (activePointers.size >= 2) {
-    updateGesture();
-    return;
-  }
-  if (!drag || drag.id !== event.pointerId) return;
-  const now = performance.now();
-  const delta = event.clientX - drag.x;
-  const nextScrollLeft = drag.scrollLeft - delta;
-  const dt = Math.max(1, now - drag.lastTime);
-  const instantVelocity = (nextScrollLeft - drag.lastScrollLeft) / dt;
-  drag.velocity = drag.velocity * 0.72 + instantVelocity * 0.28;
-  drag.lastX = event.clientX;
-  drag.lastY = event.clientY;
-  drag.lastScrollLeft = nextScrollLeft;
-  drag.lastTime = now;
-  wall.scrollLeft = nextScrollLeft;
-  scheduleCurve();
-});
-
-function stopDrag(event) {
-  const endingDrag = drag && drag.id === event.pointerId ? drag : null;
-  activePointers.delete(event.pointerId);
-  if (activePointers.size >= 2) {
-    startGesture();
-    return;
-  }
-  if (activePointers.size === 1) {
-    const [remaining] = activePointers.entries();
-    drag = {
-      id: remaining[0],
-      x: remaining[1].x,
-      y: remaining[1].y,
-      scrollLeft: wall.scrollLeft,
-      lastX: remaining[1].x,
-      lastY: remaining[1].y,
-      lastScrollLeft: wall.scrollLeft,
-      lastTime: performance.now(),
-      velocity: 0,
-    };
-    gesture = null;
-    return;
-  }
-  drag = null;
-  gesture = null;
-  wall.classList.remove("dragging");
-  if (endingDrag) startSpin(endingDrag.velocity);
+  rebuild();
+  requestAnimationFrame(renderScene);
 }
 
-wall.addEventListener("pointerup", stopDrag);
-wall.addEventListener("pointercancel", stopDrag);
-
-readStoredPhotos()
-  .then((stored) => {
-    customPhotos = stored;
-    render();
-  })
-  .catch(() => {
-    customPhotos = [];
-    render();
-  });
+boot();
