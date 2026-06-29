@@ -31,6 +31,7 @@ const velocityLimit = 7.4;
 const idleVelocity = 0.018;
 const panelsPerLane = 20;
 const heroPanelCount = 7;
+const heroPairSlots = new Set([1, 4]);
 const laneDefs = [
   { x: -1320, y: -330, yaw: 0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
   { x: 1320, y: -330, yaw: -0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
@@ -271,16 +272,63 @@ function buildPanels() {
   });
 
   for (let index = 0; index < heroPanelCount; index += 1) {
+    const zStep = tunnelLength / heroPanelCount;
+    const baseZ = index * zStep + zStep * 0.52 + random() * zStep * 0.12;
+
+    if (heroPairSlots.has(index)) {
+      const leftPhotoIndex = choosePhotoIndex(random, previous, -1);
+      previous = leftPhotoIndex;
+      const rightPhotoIndex = choosePhotoIndex(random, previous, leftPhotoIndex);
+      previous = rightPhotoIndex;
+      const leftTexture = textures[leftPhotoIndex] || { ratio: 1 };
+      const rightTexture = textures[rightPhotoIndex] || { ratio: 1 };
+      const leftHeight = mix(640, 980, random());
+      const rightHeight = mix(640, 980, random());
+      const leftWidth = clamp(leftHeight * leftTexture.ratio, 280, 760);
+      const rightWidth = clamp(rightHeight * rightTexture.ratio, 280, 760);
+      const passGap = mix(220, 310, random());
+      const bottom = -300 + (random() - 0.5) * 80;
+      const pairShade = mix(0.88, 1.18, random());
+
+      panels.push({
+        photoIndex: leftPhotoIndex,
+        laneIndex: -2,
+        baseZ,
+        x: -(passGap * 0.5 + leftWidth * 0.5) + (random() - 0.5) * 36,
+        bottom: bottom + (random() - 0.5) * 44,
+        width: leftWidth,
+        height: leftHeight,
+        yaw: 0.045 + (random() - 0.5) * 0.03,
+        roll: (random() - 0.5) * 0.025,
+        shade: pairShade,
+        kind: "hero-pair",
+      });
+
+      panels.push({
+        photoIndex: rightPhotoIndex,
+        laneIndex: -2,
+        baseZ,
+        x: passGap * 0.5 + rightWidth * 0.5 + (random() - 0.5) * 36,
+        bottom: bottom + (random() - 0.5) * 44,
+        width: rightWidth,
+        height: rightHeight,
+        yaw: -0.045 + (random() - 0.5) * 0.03,
+        roll: (random() - 0.5) * 0.025,
+        shade: pairShade,
+        kind: "hero-pair",
+      });
+      continue;
+    }
+
     const photoIndex = choosePhotoIndex(random, previous, -1);
     previous = photoIndex;
     const texture = textures[photoIndex] || { ratio: 1 };
     const height = mix(700, 1120, random());
     const width = clamp(height * texture.ratio, 320, 1240);
-    const zStep = tunnelLength / heroPanelCount;
     panels.push({
       photoIndex,
       laneIndex: -1,
-      baseZ: index * zStep + zStep * 0.52 + random() * zStep * 0.12,
+      baseZ,
       x: (random() - 0.5) * 120,
       bottom: -310 + (random() - 0.5) * 90,
       width,
@@ -391,7 +439,8 @@ function drawPanel(panel, z, focal, horizon) {
 
   const nearFade = clamp((z - nearPlane) / 700, 0, 1);
   const farFade = clamp((farPlane - z) / 3400, 0, 1);
-  const edgeFade = panel.kind === "hero" ? 1 : clamp(1.15 - Math.abs(panel.x) / 2200, 0.54, 1);
+  const isCenterPanel = panel.kind === "hero" || panel.kind === "hero-pair";
+  const edgeFade = isCenterPanel ? 1 : clamp(1.15 - Math.abs(panel.x) / 2200, 0.54, 1);
   const alpha = nearFade * farFade * edgeFade;
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
@@ -430,7 +479,8 @@ function render(now) {
     count: photoSources.length,
     panels: panels.length,
     renderedPanels: rendered,
-    heroPanels: panels.filter((panel) => panel.kind === "hero").length,
+    heroPanels: panels.filter((panel) => panel.kind === "hero" || panel.kind === "hero-pair").length,
+    pairedHeroPanels: panels.filter((panel) => panel.kind === "hero-pair").length,
     velocity: Number(velocity.toFixed(3)),
     travel: Number(travel.toFixed(1)),
     webgl: Boolean(gl),
