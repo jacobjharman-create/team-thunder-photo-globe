@@ -396,7 +396,7 @@ function drawPanel(panel, z, focal, horizon) {
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
   drawTexturedQuad(getPanelGeometry(panel, z, 1.13, 14), shadowTexture, focal, horizon, alpha * 0.42, shade * 0.18);
-  drawTexturedQuad(getPanelGeometry(panel, z, 1.075, 7), frameTexture, focal, horizon, alpha * 0.82, shade * 0.72);
+  drawTexturedQuad(getPanelGeometry(panel, z, 1.028, 7), frameTexture, focal, horizon, alpha * 0.72, shade * 0.72);
   return drawTexturedQuad(corners, texture, focal, horizon, alpha, shade);
 }
 
