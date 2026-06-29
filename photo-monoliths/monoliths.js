@@ -388,11 +388,12 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
 
 function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
-  const exitTurnStart = nearPlane + (farPlane - nearPlane) * 0.02;
-  const closeTurn = 1 - smoothstep(nearPlane + 220, exitTurnStart, z);
-  const targetYaw = clamp(Math.atan2(panel.x, z + 260), -0.95, 0.95);
+  const approachTurnStart = nearPlane + (farPlane - nearPlane) * 0.28;
+  const approachTurnEnd = nearPlane + 520;
+  const closeTurn = 1 - smoothstep(approachTurnEnd, approachTurnStart, z);
+  const targetYaw = clamp(Math.atan2(panel.x, z + 320), -1.05, 1.05);
   const yaw = mix(panel.yaw, targetYaw, closeTurn);
-  const roll = panel.roll * (1 - closeTurn * 0.82);
+  const roll = panel.roll * (1 - closeTurn * 0.95);
   const cosYaw = Math.cos(yaw);
   const sinYaw = Math.sin(yaw);
   const cosRoll = Math.cos(roll);
@@ -448,9 +449,8 @@ function drawPanel(panel, z, focal, horizon) {
   if (maxX < -240 || minX > canvas.width + 240 || maxY < -240 || minY > canvas.height + 240) return false;
 
   const exitFadeStart = nearPlane + (farPlane - nearPlane) * 0.02;
-  const exitFadeEnd = nearPlane + 160;
-  const exitFadeTrigger = exitFadeEnd + (exitFadeStart - exitFadeEnd) * 0.25;
-  const alpha = smoothstep(exitFadeEnd, exitFadeTrigger, z);
+  const exitFadeEnd = nearPlane + 420;
+  const alpha = smoothstep(exitFadeEnd, exitFadeStart, z);
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
   drawTexturedQuad(getPanelGeometry(panel, z, 1.13, 14), shadowTexture, focal, horizon, alpha * 0.42, shade * 0.18);
