@@ -1,4 +1,6 @@
 const photoBase = window.PHOTO_MONOLITH_ASSET_BASE || "../photo-globe/assets/photo-wall/";
+document.querySelectorAll('.globe-link, a[aria-label="Open photo globe"]').forEach((element) => element.remove());
+
 const photoSources = [
   ["1-Photo-1.jpg", 1.3333],
   ["2-Photo-2.jpg", 0.4602],
