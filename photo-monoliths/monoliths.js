@@ -388,9 +388,10 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
 
 function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
-  const closeTurn = 1 - smoothstep(nearPlane + 360, nearPlane + 2800, z);
-  const yaw = panel.yaw * (1 - closeTurn * 0.82);
-  const roll = panel.roll * (1 - closeTurn * 0.55);
+  const closeTurn = 1 - smoothstep(nearPlane + 520, nearPlane + 5600, z);
+  const targetYaw = clamp(Math.atan2(panel.x, z + 620), -0.78, 0.78);
+  const yaw = mix(panel.yaw, targetYaw, closeTurn * 0.96);
+  const roll = panel.roll * (1 - closeTurn * 0.68);
   const cosYaw = Math.cos(yaw);
   const sinYaw = Math.sin(yaw);
   const cosRoll = Math.cos(roll);
