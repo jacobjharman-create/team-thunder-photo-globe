@@ -388,7 +388,7 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
 
 function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
-  const exitTurnStart = nearPlane + (farPlane - nearPlane) * 0.1;
+  const exitTurnStart = nearPlane + (farPlane - nearPlane) * 0.02;
   const closeTurn = 1 - smoothstep(nearPlane + 220, exitTurnStart, z);
   const targetYaw = clamp(Math.atan2(panel.x, z + 260), -0.95, 0.95);
   const yaw = mix(panel.yaw, targetYaw, closeTurn);
@@ -447,7 +447,7 @@ function drawPanel(panel, z, focal, horizon) {
   const maxY = Math.max(...points.map((point) => point.y));
   if (maxX < -240 || minX > canvas.width + 240 || maxY < -240 || minY > canvas.height + 240) return false;
 
-  const exitFadeStart = nearPlane + (farPlane - nearPlane) * 0.1;
+  const exitFadeStart = nearPlane + (farPlane - nearPlane) * 0.02;
   const alpha = smoothstep(nearPlane + 160, exitFadeStart, z);
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
