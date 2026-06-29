@@ -448,7 +448,9 @@ function drawPanel(panel, z, focal, horizon) {
   if (maxX < -240 || minX > canvas.width + 240 || maxY < -240 || minY > canvas.height + 240) return false;
 
   const exitFadeStart = nearPlane + (farPlane - nearPlane) * 0.02;
-  const alpha = smoothstep(nearPlane + 160, exitFadeStart, z);
+  const exitFadeEnd = nearPlane + 160;
+  const exitFadeTrigger = exitFadeEnd + (exitFadeStart - exitFadeEnd) * 0.25;
+  const alpha = smoothstep(exitFadeEnd, exitFadeTrigger, z);
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
   drawTexturedQuad(getPanelGeometry(panel, z, 1.13, 14), shadowTexture, focal, horizon, alpha * 0.42, shade * 0.18);
