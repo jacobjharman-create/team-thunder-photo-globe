@@ -87,6 +87,11 @@ function mix(a, b, amount) {
   return a + (b - a) * amount;
 }
 
+function smoothstep(edge0, edge1, value) {
+  const amount = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return amount * amount * (3 - 2 * amount);
+}
+
 function makeShader(type, source) {
   const shader = gl.createShader(type);
   gl.shaderSource(shader, source);
@@ -383,10 +388,13 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
 
 function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
-  const cosYaw = Math.cos(panel.yaw);
-  const sinYaw = Math.sin(panel.yaw);
-  const cosRoll = Math.cos(panel.roll);
-  const sinRoll = Math.sin(panel.roll);
+  const closeTurn = 1 - smoothstep(nearPlane + 360, nearPlane + 2800, z);
+  const yaw = panel.yaw * (1 - closeTurn * 0.82);
+  const roll = panel.roll * (1 - closeTurn * 0.55);
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  const cosRoll = Math.cos(roll);
+  const sinRoll = Math.sin(roll);
   const halfW = panel.width * 0.5 * scale;
   const halfH = panel.height * 0.5 * scale;
   const right = { x: cosYaw * cosRoll, y: sinRoll, z: -sinYaw * cosRoll };
@@ -437,8 +445,8 @@ function drawPanel(panel, z, focal, horizon) {
   const maxY = Math.max(...points.map((point) => point.y));
   if (maxX < -240 || minX > canvas.width + 240 || maxY < -240 || minY > canvas.height + 240) return false;
 
-  const nearFade = clamp((z - nearPlane) / 700, 0, 1);
-  const farFade = clamp((farPlane - z) / 3400, 0, 1);
+  const nearFade = smoothstep(nearPlane + 120, nearPlane + 1450, z);
+  const farFade = smoothstep(farPlane, farPlane - 3400, z);
   const isCenterPanel = panel.kind === "hero" || panel.kind === "hero-pair";
   const edgeFade = isCenterPanel ? 1 : clamp(1.15 - Math.abs(panel.x) / 2200, 0.54, 1);
   const alpha = nearFade * farFade * edgeFade;

@@ -29,10 +29,14 @@ body {
 
 .experience {
   background:
-    radial-gradient(ellipse at 50% 74%, rgba(241, 183, 53, 0.18), transparent 22%),
-    radial-gradient(ellipse at 50% 52%, rgba(29, 99, 216, 0.22), transparent 36%),
-    radial-gradient(ellipse at 50% 50%, rgba(200, 31, 40, 0.18), transparent 48%),
-    linear-gradient(180deg, #020307 0%, #07101c 50%, #020307 100%);
+    radial-gradient(ellipse at 50% 74%, rgba(241, 183, 53, 0.16), transparent 22%),
+    radial-gradient(ellipse at 50% 52%, rgba(29, 99, 216, 0.15), transparent 38%),
+    linear-gradient(180deg, rgba(2, 3, 7, 0.72) 0%, rgba(7, 16, 28, 0.28) 46%, rgba(2, 3, 7, 0.76) 100%),
+    url("thunder-wall-background.png"),
+    #03050a;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
