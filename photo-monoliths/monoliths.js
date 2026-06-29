@@ -23,13 +23,14 @@ const photoSources = [
 ];
 
 const canvas = document.querySelector("#monolith-canvas");
-const tunnelLength = 26000;
+const tunnelLength = 24000;
 const nearPlane = 86;
 const farPlane = tunnelLength + 1500;
-const travelOffset = 820;
+const travelOffset = 740;
 const velocityLimit = 7.4;
 const idleVelocity = 0.018;
-const panelsPerLane = 18;
+const panelsPerLane = 20;
+const heroPanelCount = 7;
 const laneDefs = [
   { x: -1320, y: -330, yaw: 0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
   { x: 1320, y: -330, yaw: -0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
@@ -264,9 +265,32 @@ function buildPanels() {
         yaw: lane.yaw + (random() - 0.5) * 0.08,
         roll: (random() - 0.5) * 0.045,
         shade: mix(0.72, 1.12, random()),
+        kind: "wall",
       });
     }
   });
+
+  for (let index = 0; index < heroPanelCount; index += 1) {
+    const photoIndex = choosePhotoIndex(random, previous, -1);
+    previous = photoIndex;
+    const texture = textures[photoIndex] || { ratio: 1 };
+    const height = mix(700, 1120, random());
+    const width = clamp(height * texture.ratio, 320, 1240);
+    const zStep = tunnelLength / heroPanelCount;
+    panels.push({
+      photoIndex,
+      laneIndex: -1,
+      baseZ: index * zStep + zStep * 0.52 + random() * zStep * 0.12,
+      x: (random() - 0.5) * 120,
+      bottom: -310 + (random() - 0.5) * 90,
+      width,
+      height,
+      yaw: (random() - 0.5) * 0.035,
+      roll: (random() - 0.5) * 0.025,
+      shade: mix(0.86, 1.18, random()),
+      kind: "hero",
+    });
+  }
 
   panels.sort((a, b) => a.baseZ - b.baseZ);
   stats.panels = panels.length;
@@ -367,7 +391,7 @@ function drawPanel(panel, z, focal, horizon) {
 
   const nearFade = clamp((z - nearPlane) / 700, 0, 1);
   const farFade = clamp((farPlane - z) / 3400, 0, 1);
-  const edgeFade = clamp(1.15 - Math.abs(panel.x) / 2200, 0.54, 1);
+  const edgeFade = panel.kind === "hero" ? 1 : clamp(1.15 - Math.abs(panel.x) / 2200, 0.54, 1);
   const alpha = nearFade * farFade * edgeFade;
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
@@ -406,6 +430,7 @@ function render(now) {
     count: photoSources.length,
     panels: panels.length,
     renderedPanels: rendered,
+    heroPanels: panels.filter((panel) => panel.kind === "hero").length,
     velocity: Number(velocity.toFixed(3)),
     travel: Number(travel.toFixed(1)),
     webgl: Boolean(gl),
