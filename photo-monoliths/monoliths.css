@@ -81,13 +81,13 @@ body {
   border-radius: 999px;
   color: rgba(247, 247, 244, 0.86);
   display: inline-flex;
-  font-size: 0.74rem;
+  font-size: 1rem;
   font-weight: 800;
   height: 36px;
   justify-content: center;
   letter-spacing: 0;
-  min-width: 72px;
-  padding: 0 14px;
+  min-width: 36px;
+  padding: 0;
   position: fixed;
   right: max(12px, env(safe-area-inset-right));
   text-decoration: none;
@@ -104,7 +104,7 @@ body {
 @media (orientation: landscape) and (max-height: 520px) {
   .globe-link {
     height: 32px;
-    min-width: 64px;
+    min-width: 32px;
     top: max(8px, env(safe-area-inset-top));
   }
 }

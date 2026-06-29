@@ -23,20 +23,26 @@ const photoSources = [
 ];
 
 const canvas = document.querySelector("#monolith-canvas");
-const tunnelLength = 24000;
+const tunnelLength = 42000;
 const nearPlane = 86;
-const farPlane = tunnelLength + 1500;
-const travelOffset = 740;
+const farPlane = tunnelLength + 2400;
+const travelOffset = 1800;
 const velocityLimit = 7.4;
 const idleVelocity = 0.018;
-const panelsPerLane = 20;
-const heroPanelCount = 7;
-const laneDefs = [
-  { x: -1320, y: -330, yaw: 0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
-  { x: 1320, y: -330, yaw: -0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
-  { x: -760, y: -260, yaw: 0.15, height: [620, 980], jitterX: 140, jitterY: 130 },
-  { x: 760, y: -260, yaw: -0.15, height: [620, 980], jitterX: 140, jitterY: 130 },
-];
+const panelsPerLane = 38;
+const heroPanelCount = 6;
+const wheelLaneAngles = [-1.05, -0.75, -0.45, -0.15, 0.15, 0.45, 0.75, 1.05];
+const laneDefs = wheelLaneAngles.map((angle, index) => ({
+  angle,
+  x: Math.sin(angle) * 1720,
+  y: -540 + Math.cos(angle) * 900,
+  yaw: -angle * 0.34,
+  pitch: -Math.cos(angle) * 0.32,
+  height: [300, 580],
+  jitterX: 76,
+  jitterY: 72,
+  cadence: (index % 3) * 0.18,
+}));
 
 let gl;
 let program;
@@ -251,18 +257,19 @@ function buildPanels() {
       lanePrevious[laneIndex] = photoIndex;
       const texture = textures[photoIndex] || { ratio: 1 };
       const height = mix(lane.height[0], lane.height[1], random());
-      const width = clamp(height * texture.ratio, 260, 1320);
+      const width = clamp(height * texture.ratio, 170, 860);
       const zStep = tunnelLength / panelsPerLane;
-      const cadenceOffset = laneIndex % 2 === 0 ? 0 : zStep * 0.46;
+      const cadenceOffset = zStep * lane.cadence;
       panels.push({
         photoIndex,
         laneIndex,
-        baseZ: index * zStep + cadenceOffset + random() * zStep * 0.18,
+        baseZ: index * zStep + cadenceOffset + random() * zStep * 0.28,
         x: lane.x + (random() - 0.5) * lane.jitterX,
         bottom: lane.y + (random() - 0.5) * lane.jitterY,
         width,
         height,
         yaw: lane.yaw + (random() - 0.5) * 0.08,
+        pitch: lane.pitch + (random() - 0.5) * 0.08,
         roll: (random() - 0.5) * 0.045,
         shade: mix(0.72, 1.12, random()),
         kind: "wall",
@@ -274,8 +281,8 @@ function buildPanels() {
     const photoIndex = choosePhotoIndex(random, previous, -1);
     previous = photoIndex;
     const texture = textures[photoIndex] || { ratio: 1 };
-    const height = mix(700, 1120, random());
-    const width = clamp(height * texture.ratio, 320, 1240);
+    const height = mix(560, 880, random());
+    const width = clamp(height * texture.ratio, 260, 980);
     const zStep = tunnelLength / heroPanelCount;
     panels.push({
       photoIndex,
@@ -286,6 +293,7 @@ function buildPanels() {
       width,
       height,
       yaw: (random() - 0.5) * 0.035,
+      pitch: (random() - 0.5) * 0.035,
       roll: (random() - 0.5) * 0.025,
       shade: mix(0.86, 1.18, random()),
       kind: "hero",
@@ -333,16 +341,38 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
   vertexData[offset + 5] = shade;
 }
 
+function rotatePanelAxis(axis, yaw, pitch, roll) {
+  const cosRoll = Math.cos(roll);
+  const sinRoll = Math.sin(roll);
+  const rolled = {
+    x: axis.x * cosRoll - axis.y * sinRoll,
+    y: axis.x * sinRoll + axis.y * cosRoll,
+    z: axis.z,
+  };
+
+  const cosPitch = Math.cos(pitch);
+  const sinPitch = Math.sin(pitch);
+  const pitched = {
+    x: rolled.x,
+    y: rolled.y * cosPitch - rolled.z * sinPitch,
+    z: rolled.y * sinPitch + rolled.z * cosPitch,
+  };
+
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  return {
+    x: pitched.x * cosYaw + pitched.z * sinYaw,
+    y: pitched.y,
+    z: -pitched.x * sinYaw + pitched.z * cosYaw,
+  };
+}
+
 function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
-  const cosYaw = Math.cos(panel.yaw);
-  const sinYaw = Math.sin(panel.yaw);
-  const cosRoll = Math.cos(panel.roll);
-  const sinRoll = Math.sin(panel.roll);
   const halfW = panel.width * 0.5 * scale;
   const halfH = panel.height * 0.5 * scale;
-  const right = { x: cosYaw * cosRoll, y: sinRoll, z: -sinYaw * cosRoll };
-  const up = { x: -cosYaw * sinRoll, y: cosRoll, z: sinYaw * sinRoll };
+  const right = rotatePanelAxis({ x: 1, y: 0, z: 0 }, panel.yaw, panel.pitch || 0, panel.roll);
+  const up = rotatePanelAxis({ x: 0, y: 1, z: 0 }, panel.yaw, panel.pitch || 0, panel.roll);
   const center = { x: panel.x, y: centerY + Math.sin((travel + panel.baseZ) * 0.0008) * 10, z: z + zNudge };
   return [
     { x: center.x - right.x * halfW + up.x * halfH, y: center.y - right.y * halfW + up.y * halfH, z: center.z - right.z * halfW + up.z * halfH },
@@ -413,7 +443,7 @@ function render(now) {
   gl.clear(gl.COLOR_BUFFER_BIT);
 
   const focal = (canvas.height * 0.9) / Math.tan(36 * Math.PI / 180);
-  const horizon = canvas.height * 0.62;
+  const horizon = canvas.height * 0.68;
   const drawQueue = panels.map((panel) => ({
     panel,
     z: positiveModulo(panel.baseZ - travel, tunnelLength) + travelOffset,
@@ -431,6 +461,7 @@ function render(now) {
     panels: panels.length,
     renderedPanels: rendered,
     heroPanels: panels.filter((panel) => panel.kind === "hero").length,
+    wheelLanes: laneDefs.length,
     velocity: Number(velocity.toFixed(3)),
     travel: Number(travel.toFixed(1)),
     webgl: Boolean(gl),
