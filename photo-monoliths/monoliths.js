@@ -388,10 +388,11 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
 
 function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
-  const closeTurn = 1 - smoothstep(nearPlane + 520, nearPlane + 5600, z);
-  const targetYaw = clamp(Math.atan2(panel.x, z + 620), -0.78, 0.78);
-  const yaw = mix(panel.yaw, targetYaw, closeTurn * 0.96);
-  const roll = panel.roll * (1 - closeTurn * 0.68);
+  const exitTurnStart = nearPlane + (farPlane - nearPlane) * 0.1;
+  const closeTurn = 1 - smoothstep(nearPlane + 220, exitTurnStart, z);
+  const targetYaw = clamp(Math.atan2(panel.x, z + 260), -0.95, 0.95);
+  const yaw = mix(panel.yaw, targetYaw, closeTurn);
+  const roll = panel.roll * (1 - closeTurn * 0.82);
   const cosYaw = Math.cos(yaw);
   const sinYaw = Math.sin(yaw);
   const cosRoll = Math.cos(roll);
@@ -446,11 +447,8 @@ function drawPanel(panel, z, focal, horizon) {
   const maxY = Math.max(...points.map((point) => point.y));
   if (maxX < -240 || minX > canvas.width + 240 || maxY < -240 || minY > canvas.height + 240) return false;
 
-  const nearFade = smoothstep(nearPlane + 120, nearPlane + 1450, z);
-  const farFade = smoothstep(farPlane, farPlane - 3400, z);
-  const isCenterPanel = panel.kind === "hero" || panel.kind === "hero-pair";
-  const edgeFade = isCenterPanel ? 1 : clamp(1.15 - Math.abs(panel.x) / 2200, 0.54, 1);
-  const alpha = nearFade * farFade * edgeFade;
+  const exitFadeStart = nearPlane + (farPlane - nearPlane) * 0.1;
+  const alpha = smoothstep(nearPlane + 160, exitFadeStart, z);
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
   drawTexturedQuad(getPanelGeometry(panel, z, 1.13, 14), shadowTexture, focal, horizon, alpha * 0.42, shade * 0.18);
