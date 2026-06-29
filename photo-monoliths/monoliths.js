@@ -23,20 +23,18 @@ const photoSources = [
 ];
 
 const canvas = document.querySelector("#monolith-canvas");
-const tunnelLength = 15000;
+const tunnelLength = 26000;
 const nearPlane = 86;
-const farPlane = tunnelLength + 900;
-const travelOffset = 520;
+const farPlane = tunnelLength + 1500;
+const travelOffset = 820;
 const velocityLimit = 7.4;
 const idleVelocity = 0.018;
-const panelsPerLane = 34;
+const panelsPerLane = 18;
 const laneDefs = [
-  { x: -980, y: -330, yaw: 0.24, height: [820, 1220], jitterX: 170, jitterY: 120 },
-  { x: 980, y: -330, yaw: -0.24, height: [820, 1220], jitterX: 170, jitterY: 120 },
-  { x: -520, y: -270, yaw: 0.12, height: [640, 1030], jitterX: 190, jitterY: 170 },
-  { x: 520, y: -270, yaw: -0.12, height: [640, 1030], jitterX: 190, jitterY: 170 },
-  { x: -150, y: -300, yaw: 0.04, height: [700, 1180], jitterX: 250, jitterY: 150 },
-  { x: 150, y: -300, yaw: -0.04, height: [700, 1180], jitterX: 250, jitterY: 150 },
+  { x: -1320, y: -330, yaw: 0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
+  { x: 1320, y: -330, yaw: -0.32, height: [780, 1180], jitterX: 120, jitterY: 105 },
+  { x: -760, y: -260, yaw: 0.15, height: [620, 980], jitterX: 140, jitterY: 130 },
+  { x: 760, y: -260, yaw: -0.15, height: [620, 980], jitterX: 140, jitterY: 130 },
 ];
 
 let gl;
@@ -45,6 +43,8 @@ let buffer;
 let attribs;
 let uniforms;
 let textures = [];
+let frameTexture;
+let shadowTexture;
 let panels = [];
 let travel = 0;
 let velocity = 0.12;
@@ -137,6 +137,10 @@ function makeProgram() {
 }
 
 function makePlaceholderTexture() {
+  return makeSolidTexture(9, 12, 22, 255);
+}
+
+function makeSolidTexture(red, green, blue, alpha) {
   const texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -152,7 +156,7 @@ function makePlaceholderTexture() {
     0,
     gl.RGBA,
     gl.UNSIGNED_BYTE,
-    new Uint8Array([9, 12, 22, 255]),
+    new Uint8Array([red, green, blue, alpha]),
   );
   return texture;
 }
@@ -217,6 +221,8 @@ function initWebGl() {
   gl.vertexAttribPointer(attribs.shade, 1, gl.FLOAT, false, 24, 20);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  frameTexture = { texture: makeSolidTexture(218, 168, 54, 255), ratio: 1, ready: true };
+  shadowTexture = { texture: makeSolidTexture(2, 4, 9, 255), ratio: 1, ready: true };
   stats.webgl = true;
   return true;
 }
@@ -246,10 +252,11 @@ function buildPanels() {
       const height = mix(lane.height[0], lane.height[1], random());
       const width = clamp(height * texture.ratio, 260, 1320);
       const zStep = tunnelLength / panelsPerLane;
+      const cadenceOffset = laneIndex % 2 === 0 ? 0 : zStep * 0.46;
       panels.push({
         photoIndex,
         laneIndex,
-        baseZ: index * zStep + laneIndex * (zStep / laneDefs.length) + random() * zStep * 0.42,
+        baseZ: index * zStep + cadenceOffset + random() * zStep * 0.18,
         x: lane.x + (random() - 0.5) * lane.jitterX,
         bottom: lane.y + (random() - 0.5) * lane.jitterY,
         width,
@@ -302,26 +309,52 @@ function pushVertex(offset, point, uvX, uvY, alpha, shade) {
   vertexData[offset + 5] = shade;
 }
 
-function drawPanel(panel, z, focal, horizon) {
-  const texture = textures[panel.photoIndex];
-  if (!texture) return false;
-
+function getPanelGeometry(panel, z, scale = 1, zNudge = 0) {
   const centerY = panel.bottom + panel.height * 0.5;
   const cosYaw = Math.cos(panel.yaw);
   const sinYaw = Math.sin(panel.yaw);
   const cosRoll = Math.cos(panel.roll);
   const sinRoll = Math.sin(panel.roll);
-  const halfW = panel.width * 0.5;
-  const halfH = panel.height * 0.5;
+  const halfW = panel.width * 0.5 * scale;
+  const halfH = panel.height * 0.5 * scale;
   const right = { x: cosYaw * cosRoll, y: sinRoll, z: -sinYaw * cosRoll };
   const up = { x: -cosYaw * sinRoll, y: cosRoll, z: sinYaw * sinRoll };
-  const center = { x: panel.x, y: centerY + Math.sin((travel + panel.baseZ) * 0.0008) * 18, z };
-  const corners = [
+  const center = { x: panel.x, y: centerY + Math.sin((travel + panel.baseZ) * 0.0008) * 10, z: z + zNudge };
+  return [
     { x: center.x - right.x * halfW + up.x * halfH, y: center.y - right.y * halfW + up.y * halfH, z: center.z - right.z * halfW + up.z * halfH },
     { x: center.x + right.x * halfW + up.x * halfH, y: center.y + right.y * halfW + up.y * halfH, z: center.z + right.z * halfW + up.z * halfH },
     { x: center.x - right.x * halfW - up.x * halfH, y: center.y - right.y * halfW - up.y * halfH, z: center.z - right.z * halfW - up.z * halfH },
     { x: center.x + right.x * halfW - up.x * halfH, y: center.y + right.y * halfW - up.y * halfH, z: center.z + right.z * halfW - up.z * halfH },
   ];
+}
+
+function drawTexturedQuad(corners, texture, focal, horizon, alpha, shade) {
+  if (!texture || corners.some((corner) => corner.z <= nearPlane)) return false;
+
+  const points = corners.map((corner) => project(corner, focal, horizon));
+  const minX = Math.min(...points.map((point) => point.x));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxY = Math.max(...points.map((point) => point.y));
+  if (maxX < -240 || minX > canvas.width + 240 || maxY < -240 || minY > canvas.height + 240) return false;
+
+  pushVertex(0, points[0], 0, 0, alpha, shade);
+  pushVertex(6, points[1], 1, 0, alpha, shade);
+  pushVertex(12, points[2], 0, 1, alpha, shade);
+  pushVertex(18, points[2], 0, 1, alpha, shade);
+  pushVertex(24, points[1], 1, 0, alpha, shade);
+  pushVertex(30, points[3], 1, 1, alpha, shade);
+
+  gl.bindTexture(gl.TEXTURE_2D, texture.texture);
+  gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STREAM_DRAW);
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+  return true;
+}
+
+function drawPanel(panel, z, focal, horizon) {
+  const texture = textures[panel.photoIndex];
+  if (!texture) return false;
+  const corners = getPanelGeometry(panel, z);
 
   if (corners.some((corner) => corner.z <= nearPlane)) return false;
 
@@ -338,17 +371,9 @@ function drawPanel(panel, z, focal, horizon) {
   const alpha = nearFade * farFade * edgeFade;
   const shade = panel.shade * mix(1.15, 0.48, clamp(z / farPlane, 0, 1));
 
-  pushVertex(0, points[0], 0, 0, alpha, shade);
-  pushVertex(6, points[1], 1, 0, alpha, shade);
-  pushVertex(12, points[2], 0, 1, alpha, shade);
-  pushVertex(18, points[2], 0, 1, alpha, shade);
-  pushVertex(24, points[1], 1, 0, alpha, shade);
-  pushVertex(30, points[3], 1, 1, alpha, shade);
-
-  gl.bindTexture(gl.TEXTURE_2D, texture.texture);
-  gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.STREAM_DRAW);
-  gl.drawArrays(gl.TRIANGLES, 0, 6);
-  return true;
+  drawTexturedQuad(getPanelGeometry(panel, z, 1.13, 14), shadowTexture, focal, horizon, alpha * 0.42, shade * 0.18);
+  drawTexturedQuad(getPanelGeometry(panel, z, 1.075, 7), frameTexture, focal, horizon, alpha * 0.82, shade * 0.72);
+  return drawTexturedQuad(corners, texture, focal, horizon, alpha, shade);
 }
 
 function render(now) {
